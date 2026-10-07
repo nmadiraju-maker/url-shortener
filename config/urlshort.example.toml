@@ -1,0 +1,23 @@
+# URL shortener configuration. Copy to config/urlshort.toml and select it with:
+#   URLSHORT_CONFIG=config/urlshort.toml
+# Precedence: built-in defaults < this file < environment variables.
+# Unknown sections or keys, wrong types and out-of-range values stop the service at startup.
+# Secrets are NOT allowed here; set them in the environment:
+#   URLSHORT_ADMIN_API_KEY   admin key for link takedown
+#   URLSHORT_IP_SALT         secret used when hashing client IPs for analytics
+
+[service]
+base_url = "http://localhost:8000"   # public origin used to build short URLs; must be http(s)
+db_path = "urlshort.db"              # SQLite file
+code_length = 7                      # random short-code length, at least 4 (62^7 ~ 3.5e12 codes)
+max_url_length = 2048
+max_ttl_seconds = 31536000           # 1 year
+
+[ratelimit]
+create_rate_per_minute = 60          # per client, link creation only
+
+[validation]
+blocked_domains = []                 # e.g. ["evil.example"]; subdomains are blocked too
+# Shortener domains rejected as targets. Replaces the built-in list when set.
+# The service's own host (from base_url) is always rejected as well.
+known_shorteners = ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "rebrand.ly"]
