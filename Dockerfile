@@ -20,5 +20,5 @@ HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
 
 # --no-access-log: the app already writes one structured JSON line per request.
 # --log-config: uvicorn's own lines are JSON too, so every line of output is machine-readable.
-CMD ["uvicorn", "urlshort.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", \
+CMD ["uvicorn", "urlshort.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", \
      "--log-config", "config/uvicorn-logging.json"]

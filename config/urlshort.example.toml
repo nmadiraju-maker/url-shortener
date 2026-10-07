@@ -7,6 +7,9 @@
 #   URLSHORT_IP_SALT         secret used when hashing client IPs for analytics
 
 [service]
+# "production" refuses to start with unsafe settings (default salt, missing admin key, http base_url,
+# in-memory database, exposed docs, CORS "*", DEBUG logs, HSTS off) and lists every problem at once.
+environment = "development"
 base_url = "http://localhost:8000"   # public origin used to build short URLs; must be http(s)
 db_path = "urlshort.db"              # SQLite file
 code_length = 7                      # random short-code length, at least 4 (62^7 ~ 3.5e12 codes)
