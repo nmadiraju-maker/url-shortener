@@ -3,7 +3,7 @@
 A URL shortener service with core APIs, analytics and reliability features, built incrementally.
 Every change goes through the CI quality gates below.
 
-**Status:** walking skeleton — the service exposes `/healthz` only. Features arrive in later commits.
+**Status:** foundations — `/healthz`, plus domain errors, URL/alias/TTL validation and validated configuration. The link API arrives in later commits.
 
 ## Setup
 ```bash
@@ -15,6 +15,15 @@ make install-dev
 ```bash
 make run                     # http://localhost:8000/healthz, API docs at /docs
 ```
+
+## Configuration
+Settings come from built-in defaults, then an optional TOML file, then environment variables (highest wins):
+```bash
+cp config/urlshort.example.toml config/urlshort.toml
+export URLSHORT_CONFIG=config/urlshort.toml
+```
+Unknown keys, wrong types and out-of-range values stop the service at startup. Secrets
+(`URLSHORT_ADMIN_API_KEY`, `URLSHORT_IP_SALT`) are accepted only from the environment, never the file.
 
 ## Quality gates
 `.github/workflows/ci.yml` runs on every push and pull request:
