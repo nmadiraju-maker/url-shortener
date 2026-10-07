@@ -300,11 +300,27 @@ def test_redirect_rate_limit(repo: SqliteRepository, clock: FakeClock) -> None:
     assert refused.status_code == 429 and "retry-after" in refused.headers
 
 
-def test_unknown_peer_shares_one_key() -> None:
+def test_requests_without_a_peer_share_one_rate_limit_key(repo: SqliteRepository) -> None:
     from starlette.requests import Request as StarletteRequest
 
-    from urlshort.api import client_key
-    assert client_key(StarletteRequest({"type": "http", "client": None, "headers": []})) == "unknown"
+    from urlshort.ratelimit import Decision
+    from urlshort.service import ShortenerService
+    from urlshort.web.clientip import TrustedProxies
+    from urlshort.web.context import AppContext
+
+    class RecordingLimiter:
+        def __init__(self) -> None:
+            self.keys: list[str] = []
+
+        def acquire(self, key: str) -> Decision:
+            self.keys.append(key)
+            return Decision(allowed=True, limit=1, remaining=0, reset_after=1.0, retry_after=0.0)
+
+    limiter = RecordingLimiter()
+    ctx = AppContext(settings=Settings(), repository=repo, service=ShortenerService(repo, Settings()),
+                     create_limiter=limiter, redirect_limiter=limiter, proxies=TrustedProxies())
+    ctx.enforce(limiter, StarletteRequest({"type": "http", "client": None, "headers": []}), "create")
+    assert limiter.keys == ["unknown"]
 
 
 # ---------------- logging behaviour through the API
@@ -342,3 +358,119 @@ def test_startup_summary_masks_secrets_and_warns_on_default_salt(repo: SqliteRep
     warnings = [x["msg"] for x in lines if x["level"] == "WARNING"]
     assert len(warnings) == 1 and "URLSHORT_IP_SALT" in warnings[0]                  # only the default-salt app
     assert any("admin endpoints are disabled" in x["msg"] for x in lines)            # second app has no key
+
+
+# ---------------- API hardening: proxies, headers, CORS, docs, liveness
+PROXY = ("10.0.0.5", 4000)
+
+
+def proxied_app(repo: SqliteRepository, clock: FakeClock, **settings: object) -> TestClient:
+    app = create_app(Settings(trusted_proxies=frozenset({"10.0.0.0/8"}), **settings), repo,  # type: ignore[arg-type]
+                     clock=clock, monotonic=Mono())
+    return TestClient(app, client=PROXY)
+
+
+def test_rate_limits_use_the_real_client_behind_a_trusted_proxy(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-PROXY-1"""
+    client = proxied_app(repo, clock, create_burst=1)
+    def post(xff: str) -> int:
+        return client.post("/api/v1/links", json={"url": "https://example.com/p"},
+                           headers={"x-forwarded-for": xff}).status_code
+    assert post("203.0.113.1") == 201
+    assert post("203.0.113.2") in (200, 201)                 # a different client, not limited
+    assert post("203.0.113.1") == 429                         # the same client again
+
+
+def test_spoofed_header_from_untrusted_peer_is_ignored(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-PROXY-2: a client cannot dodge its limit by inventing X-Forwarded-For values."""
+    app = create_app(Settings(trusted_proxies=frozenset({"10.0.0.0/8"}), create_burst=1), repo, clock=clock,
+                     monotonic=Mono())
+    attacker = TestClient(app, client=("203.0.113.66", 4000))
+    def post(path: str, fake_ip: str) -> int:
+        return attacker.post("/api/v1/links", json={"url": f"https://example.com/{path}"},
+                             headers={"x-forwarded-for": fake_ip}).status_code
+    assert (post("a", "1.1.1.1"), post("b", "2.2.2.2")) == (201, 429)
+
+
+def test_analytics_count_real_clients_behind_proxy(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-PROXY-1"""
+    client = proxied_app(repo, clock)
+    link = create(client)
+    for xff in ("203.0.113.1", "203.0.113.2", "203.0.113.1"):
+        client.get(f"/{link['code']}", headers={"x-forwarded-for": xff, "user-agent": "Mozilla/5.0 Chrome/126"},
+                   follow_redirects=False)
+    stats = client.get(f"/api/v1/links/{link['code']}/stats", headers={"x-stats-token": str(link["stats_token"])})
+    assert stats.json()["unique_visitors_by_day"] == {"2026-01-15": 2}
+
+
+@pytest.mark.parametrize("path", ["/livez", "/api/v1/links/nope", "/nope-404"])
+def test_security_headers_on_every_response(client: TestClient, path: str) -> None:
+    """AC-HEADERS-1"""
+    h = client.get(path, follow_redirects=False).headers
+    assert h["x-content-type-options"] == "nosniff" and h["x-frame-options"] == "DENY"
+    assert h["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    assert h["referrer-policy"] == "strict-origin-when-cross-origin" and h["x-robots-tag"] == "noindex, nofollow"
+
+
+def test_security_headers_on_redirects(client: TestClient) -> None:
+    """AC-HEADERS-1"""
+    link = create(client)
+    h = client.get(f"/{link['code']}", follow_redirects=False).headers
+    assert h["x-robots-tag"] == "noindex, nofollow" and h["cache-control"] == "no-store"   # route's own value kept
+
+
+def test_docs_page_can_load_its_assets(client: TestClient) -> None:
+    h = client.get("/docs").headers
+    assert "content-security-policy" not in h and h["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.parametrize("base_url,max_age,expected", [
+    ("https://sho.rt", 31536000, "max-age=31536000; includeSubDomains"),
+    ("https://sho.rt", 0, None),
+    ("http://localhost:8000", 31536000, None),               # HSTS over plain http is meaningless
+])
+def test_hsts(repo: SqliteRepository, clock: FakeClock, base_url: str, max_age: int, expected: str | None) -> None:
+    client = TestClient(create_app(Settings(base_url=base_url, hsts_max_age=max_age), repo, clock=clock))
+    assert client.get("/livez").headers.get("strict-transport-security") == expected
+
+
+def test_cors_off_by_default(client: TestClient) -> None:
+    resp = client.options("/api/v1/links", headers={"origin": "https://app.example",
+                                                    "access-control-request-method": "POST"})
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_cors_allows_only_configured_origins(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-CORS-1"""
+    client = TestClient(create_app(Settings(cors_allow_origins=frozenset({"https://app.example"})), repo, clock=clock))
+    preflight = {"access-control-request-method": "POST",
+                 "access-control-request-headers": "content-type,x-stats-token"}
+    ok = client.options("/api/v1/links", headers={"origin": "https://app.example", **preflight})
+    assert ok.status_code == 200 and ok.headers["access-control-allow-origin"] == "https://app.example"
+    assert ok.headers["x-request-id"]                                    # preflights pass through our middleware too
+    denied = client.options("/api/v1/links", headers={"origin": "https://evil.example", **preflight})
+    assert "access-control-allow-origin" not in denied.headers
+    real = client.post("/api/v1/links", json={"url": "https://example.com/c"}, headers={"origin": "https://app.example"})
+    assert "ratelimit-remaining" in real.headers["access-control-expose-headers"].lower()
+
+
+def test_docs_can_be_hidden(repo: SqliteRepository, clock: FakeClock) -> None:
+    hidden = TestClient(create_app(Settings(expose_docs=False), repo, clock=clock))
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert hidden.get(path).status_code == 404
+    shown = TestClient(create_app(Settings(), repo, clock=clock))
+    assert shown.get("/openapi.json").status_code == 200
+
+
+def test_livez_and_healthz_alias(client: TestClient) -> None:
+    assert client.get("/livez").json() == client.get("/healthz").json() == {"status": "ok", "version": "0.1.0"}
+
+
+def test_startup_logs_trusted_proxies(repo: SqliteRepository) -> None:
+    stream, handler = capture("urlshort.api")
+    try:
+        create_app(Settings(trusted_proxies=frozenset({"10.0.0.0/8"})), repo)
+    finally:
+        logging.getLogger("urlshort.api").removeHandler(handler)
+    assert any(json.loads(x).get("ctx", {}).get("trusted_proxies") == ["10.0.0.0/8"]
+               for x in stream.getvalue().splitlines())

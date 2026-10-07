@@ -124,3 +124,35 @@ def test_summary_masks_secrets() -> None:
     assert summary["blocked_domains"] == ["a", "b"]
     unset = Settings().summary()
     assert unset["admin_api_key"] == "NOT SET" and unset["ip_hash_salt"] == "NOT SET"   # default salt = not set
+
+
+def test_http_settings(tmp_path: Path) -> None:
+    path = write(tmp_path, '[http]\ntrusted_proxies = ["10.0.0.0/8", "192.168.1.10"]\n'
+                           'cors_allow_origins = ["https://App.example/", "*"]\n'
+                           'expose_docs = false\nhsts_max_age = 0\n')
+    s = load_settings(path, {})
+    assert s.trusted_proxies == {"10.0.0.0/8", "192.168.1.10"} and s.expose_docs is False and s.hsts_max_age == 0
+    assert s.cors_allow_origins == {"https://app.example", "*"}
+    env = load_settings(None, {"URLSHORT_EXPOSE_DOCS": "No", "URLSHORT_TRUSTED_PROXIES": "fd00::/8"})
+    assert env.expose_docs is False and env.trusted_proxies == {"fd00::/8"}
+    assert load_settings(None, {"URLSHORT_EXPOSE_DOCS": "on"}).expose_docs is True
+
+
+@pytest.mark.parametrize("body,message", [
+    ('[http]\ntrusted_proxies = ["10.0.0.0/33"]\n', "not an IP address or CIDR"),
+    ('[http]\ntrusted_proxies = ["my-proxy.internal"]\n', "not an IP address or CIDR"),
+    ('[http]\ncors_allow_origins = ["https://app.example/path"]\n', "scheme://host"),
+    ('[http]\ncors_allow_origins = ["ftp://app.example"]\n', "scheme://host"),
+    ('[http]\ncors_allow_origins = ["app.example"]\n', "scheme://host"),
+    ('[http]\ncors_allow_origins = ["https://app.example/?x=1"]\n', "scheme://host"),
+    ("[http]\nexpose_docs = 1\n", "expected true or false"),
+    ("[http]\nhsts_max_age = -1\n", "at least 0"),
+])
+def test_invalid_http_settings(tmp_path: Path, body: str, message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        load_settings(write(tmp_path, body), {})
+
+
+def test_bad_boolean_in_environment() -> None:
+    with pytest.raises(ConfigError, match="URLSHORT_EXPOSE_DOCS"):
+        load_settings(None, {"URLSHORT_EXPOSE_DOCS": "maybe"})

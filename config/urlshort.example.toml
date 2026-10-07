@@ -34,3 +34,11 @@ level = "INFO"                       # DEBUG, INFO, WARNING, ERROR or CRITICAL
 # password, secret, token, stats_token, client_ip, ip, email, cookie, ...); they never replace it.
 redact_keys = []
 request_sample_rate = 1.0            # share of successful request lines kept (0..1); errors always kept
+
+[http]
+# Addresses (CIDR ranges) of YOUR load balancers / reverse proxies. X-Forwarded-For is believed only
+# when the request arrives directly from one of these; otherwise anyone could fake their IP.
+trusted_proxies = []                 # e.g. ["10.0.0.0/8", "fd00::/8"]
+cors_allow_origins = []              # browser origins allowed to call the API; empty = CORS off
+expose_docs = true                   # /docs, /redoc and /openapi.json; consider false in production
+hsts_max_age = 31536000              # Strict-Transport-Security, sent only when base_url is https; 0 disables

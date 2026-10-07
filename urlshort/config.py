@@ -12,6 +12,7 @@ Rules:
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -43,6 +44,10 @@ class Settings:
     log_level: str = "INFO"
     log_redact_keys: frozenset[str] = DEFAULT_REDACT_KEYS
     log_request_sample_rate: float = 1.0    # share of successful (<400) request lines kept; errors always kept
+    trusted_proxies: frozenset[str] = field(default_factory=frozenset)      # CIDRs allowed to set X-Forwarded-For
+    cors_allow_origins: frozenset[str] = field(default_factory=frozenset)   # empty = CORS disabled
+    expose_docs: bool = True                # /docs, /redoc, /openapi.json
+    hsts_max_age: int = 31_536_000          # sent only when base_url is https; 0 disables
 
     def summary(self) -> dict[str, object]:
         """Settings safe to log: secrets reported only as set / not set, sets as sorted lists."""
@@ -82,6 +87,8 @@ FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
     "validation": {"blocked_domains": ("blocked_domains", list), "known_shorteners": ("known_shorteners", list)},
     "logging": {"level": ("log_level", str), "redact_keys": ("log_redact_keys", list),
                 "request_sample_rate": ("log_request_sample_rate", float)},
+    "http": {"trusted_proxies": ("trusted_proxies", list), "cors_allow_origins": ("cors_allow_origins", list),
+             "expose_docs": ("expose_docs", bool), "hsts_max_age": ("hsts_max_age", int)},
 }
 SECRETS = frozenset({"admin_api_key", "ip_hash_salt"})
 ENV_SCHEMA: dict[str, tuple[str, type]] = {
@@ -98,13 +105,19 @@ ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_LOG_LEVEL": ("log_level", str),
     "URLSHORT_LOG_REDACT_KEYS": ("log_redact_keys", list),
     "URLSHORT_LOG_REQUEST_SAMPLE_RATE": ("log_request_sample_rate", float),
+    "URLSHORT_TRUSTED_PROXIES": ("trusted_proxies", list),
+    "URLSHORT_CORS_ALLOW_ORIGINS": ("cors_allow_origins", list),
+    "URLSHORT_EXPOSE_DOCS": ("expose_docs", bool),
+    "URLSHORT_HSTS_MAX_AGE": ("hsts_max_age", int),
     "URLSHORT_BLOCKED_DOMAINS": ("blocked_domains", list),
     "URLSHORT_KNOWN_SHORTENERS": ("known_shorteners", list),
     "URLSHORT_ADMIN_API_KEY": ("admin_api_key", str),
     "URLSHORT_IP_SALT": ("ip_hash_salt", str),
 }
 MINIMUMS = {"code_length": 4, "max_url_length": 1, "max_ttl_seconds": 1, "create_rate_per_minute": 1,
-            "create_burst": 1, "redirect_rate_per_minute": 1, "redirect_burst": 1, "rate_limit_max_keys": 1}
+            "create_burst": 1, "redirect_rate_per_minute": 1, "redirect_burst": 1, "rate_limit_max_keys": 1,
+            "hsts_max_age": 0}
+BOOL_WORDS = {"true": True, "1": True, "yes": True, "on": True, "false": False, "0": False, "no": False, "off": False}
 
 
 def _names(items: Sequence[object], where: str) -> frozenset[str]:
@@ -115,6 +128,10 @@ def _names(items: Sequence[object], where: str) -> frozenset[str]:
 
 
 def _coerce(value: object, kind: type, where: str) -> object:
+    if kind is bool:
+        if not isinstance(value, bool):
+            raise ConfigError(f"{where}: expected true or false, got {value!r}")
+        return value
     if kind is int and (isinstance(value, bool) or not isinstance(value, int)):  # TOML `true` is an int in Python
         raise ConfigError(f"{where}: expected an integer, got {value!r}")
     if kind is float:
@@ -166,6 +183,10 @@ def read_env(env: Mapping[str, str]) -> dict[str, object]:
                 raise ConfigError(f"{var}: expected a number, got {raw!r}") from exc
         elif kind is list:
             values[name] = _names(raw.split(","), var)
+        elif kind is bool:
+            if raw.strip().lower() not in BOOL_WORDS:
+                raise ConfigError(f"{var}: expected true or false, got {raw!r}")
+            values[name] = BOOL_WORDS[raw.strip().lower()]
         else:
             values[name] = raw
     return values
@@ -187,12 +208,32 @@ def _check(values: dict[str, object]) -> None:
     keys = values.get("log_redact_keys")
     if isinstance(keys, frozenset):
         values["log_redact_keys"] = keys | DEFAULT_REDACT_KEYS   # configured keys add to the defaults, never replace
+    _check_http(values)
     base_url = values.get("base_url")
     if isinstance(base_url, str):
         parts = urlsplit(base_url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise ConfigError(f"base_url must be an absolute http(s) URL, got {base_url!r}")
         values["base_url"] = base_url.rstrip("/")
+
+
+def _check_http(values: dict[str, object]) -> None:
+    proxies = values.get("trusted_proxies")
+    if isinstance(proxies, frozenset):
+        for cidr in proxies:
+            try:
+                ipaddress.ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ConfigError(f"trusted_proxies: {cidr!r} is not an IP address or CIDR range") from exc
+    origins = values.get("cors_allow_origins")
+    if isinstance(origins, frozenset):
+        for origin in origins:
+            parts = urlsplit(origin)
+            exact = parts.scheme in ("http", "https") and parts.hostname and parts.path in ("", "/") \
+                and not parts.query
+            if origin != "*" and not exact:
+                raise ConfigError(f"cors_allow_origins: {origin!r} must be '*' or a scheme://host[:port] origin")
+        values["cors_allow_origins"] = frozenset(o.rstrip("/") for o in origins)
 
 
 def load_settings(path: str | Path | None = None, env: Mapping[str, str] | None = None) -> Settings:
