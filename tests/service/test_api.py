@@ -305,3 +305,40 @@ def test_unknown_peer_shares_one_key() -> None:
 
     from urlshort.api import client_key
     assert client_key(StarletteRequest({"type": "http", "client": None, "headers": []})) == "unknown"
+
+
+# ---------------- logging behaviour through the API
+def capture(logger_name: str) -> tuple[io.StringIO, logging.Handler]:
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())
+    logging.getLogger(logger_name).addHandler(handler)
+    return stream, handler
+
+
+def test_successful_requests_can_be_sampled_but_errors_never_are(repo: SqliteRepository, clock: FakeClock) -> None:
+    client = TestClient(create_app(Settings(log_request_sample_rate=0.0), repo, clock=clock))
+    stream, handler = capture("urlshort.api")
+    try:
+        client.get("/healthz")
+        client.get("/nope-404")
+    finally:
+        logging.getLogger("urlshort.api").removeHandler(handler)
+    statuses = [json.loads(line)["ctx"]["status"] for line in stream.getvalue().splitlines()
+                if json.loads(line)["msg"] == "request"]
+    assert statuses == [404]
+
+
+def test_startup_summary_masks_secrets_and_warns_on_default_salt(repo: SqliteRepository) -> None:
+    stream, handler = capture("urlshort.api")
+    try:
+        create_app(Settings(admin_api_key="super-secret-key"), repo)
+        create_app(Settings(ip_hash_salt="real-salt"), repo)
+    finally:
+        logging.getLogger("urlshort.api").removeHandler(handler)
+    lines = [json.loads(line) for line in stream.getvalue().splitlines()]
+    summaries = [x["ctx"]["settings"] for x in lines if x["msg"] == "service configured"]
+    assert summaries[0]["admin_api_key"] == "set" and "super-secret-key" not in stream.getvalue()
+    warnings = [x["msg"] for x in lines if x["level"] == "WARNING"]
+    assert len(warnings) == 1 and "URLSHORT_IP_SALT" in warnings[0]                  # only the default-salt app
+    assert any("admin endpoints are disabled" in x["msg"] for x in lines)            # second app has no key

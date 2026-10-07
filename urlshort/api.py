@@ -19,9 +19,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from . import __version__
-from .config import Settings
+from .config import DEFAULT_IP_SALT, Settings
 from .errors import DomainError, RateLimited, Unauthorized
-from .logging_setup import configure_logging, request_id_var
+from .logging_setup import configure_logging, request_id_var, sampled
 from .models import CreateLinkRequest, CreateLinkResponse, ErrorResponse, LinkResponse, StatsResponse
 from .ratelimit import GcraLimiter, RateLimiter
 from .service import ShortenerService, utcnow
@@ -48,7 +48,12 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
                clock: Callable[[], datetime] = utcnow, monotonic: Callable[[], float] = time.monotonic) -> FastAPI:
     settings = settings or Settings.from_env()
     repository: Repository = repo or SqliteRepository(settings.db_path)
-    configure_logging()
+    configure_logging(settings.log_level, settings.log_redact_keys)
+    log.info("service configured", extra={"settings": settings.summary()})
+    if settings.ip_hash_salt == DEFAULT_IP_SALT:
+        log.warning("URLSHORT_IP_SALT is the built-in default; visitor IDs are weakly protected until it is set")
+    if not settings.admin_api_key:
+        log.info("URLSHORT_ADMIN_API_KEY not set; admin endpoints are disabled")
     service = ShortenerService(repository, settings, clock=clock)
     create_limiter: RateLimiter = GcraLimiter(settings.create_rate_per_minute, settings.create_burst,
                                               clock=monotonic, max_keys=settings.rate_limit_max_keys)
@@ -96,10 +101,12 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
                 log.exception("unhandled error", extra={"method": request.method, "path": request.url.path})
                 response = error_response(500, "internal_error", "an unexpected error occurred")
             response.headers["x-request-id"] = rid
-            # Log while the request ID is still bound, so this line carries it.
-            log.info("request", extra={"method": request.method, "path": request.url.path,
-                                       "status": response.status_code,
-                                       "duration_ms": round((time.perf_counter() - started) * 1000, 2)})
+            # Log while the request ID is still bound. Errors are always logged; successful requests
+            # can be sampled to control log volume (decided by request ID, so it is reproducible).
+            if response.status_code >= 400 or sampled(rid, settings.log_request_sample_rate):
+                log.info("request", extra={"method": request.method, "path": request.url.path,
+                                           "status": response.status_code,
+                                           "duration_ms": round((time.perf_counter() - started) * 1000, 2)})
             return response
         finally:
             request_id_var.reset(token)
