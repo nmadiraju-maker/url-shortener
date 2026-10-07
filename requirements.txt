@@ -1,0 +1,4 @@
+# Runtime dependencies
+fastapi>=0.110
+pydantic>=2.7
+uvicorn>=0.29
