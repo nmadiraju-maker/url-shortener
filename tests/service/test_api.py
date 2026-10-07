@@ -6,11 +6,12 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.service.conftest import FakeClock
 from urlshort.api import create_app
 from urlshort.config import Settings
 from urlshort.logging_setup import JsonFormatter
 from urlshort.storage import SqliteRepository
+
+from .helpers import FakeClock
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 

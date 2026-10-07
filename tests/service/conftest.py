@@ -1,5 +1,4 @@
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,18 +7,7 @@ from urlshort.api import create_app
 from urlshort.config import Settings
 from urlshort.storage import SqliteRepository
 
-
-class FakeClock:
-    """Controllable time, so expiry tests don't sleep."""
-
-    def __init__(self) -> None:
-        self.now = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
-
-    def __call__(self) -> datetime:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += timedelta(seconds=seconds)
+from .helpers import FakeClock
 
 
 @pytest.fixture
