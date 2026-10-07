@@ -34,7 +34,11 @@ class Settings:
     code_length: int = 7
     max_url_length: int = 2048
     max_ttl_seconds: int = 60 * 60 * 24 * 365
-    create_rate_per_minute: int = 60
+    create_rate_per_minute: int = 60        # steady rate per client for link creation
+    create_burst: int = 10                  # back-to-back creations allowed from a full allowance
+    redirect_rate_per_minute: int = 600     # per client; stops code scanning and click inflation
+    redirect_burst: int = 100
+    rate_limit_max_keys: int = 100_000      # clients tracked per limiter (bounded memory)
     admin_api_key: str = ""
     ip_hash_salt: str = "change-me"
     blocked_domains: frozenset[str] = field(default_factory=frozenset)
@@ -51,7 +55,11 @@ class Settings:
 FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
     "service": {"base_url": ("base_url", str), "db_path": ("db_path", str), "code_length": ("code_length", int),
                 "max_url_length": ("max_url_length", int), "max_ttl_seconds": ("max_ttl_seconds", int)},
-    "ratelimit": {"create_rate_per_minute": ("create_rate_per_minute", int)},
+    "ratelimit": {"create_rate_per_minute": ("create_rate_per_minute", int),
+                  "create_burst": ("create_burst", int),
+                  "redirect_rate_per_minute": ("redirect_rate_per_minute", int),
+                  "redirect_burst": ("redirect_burst", int),
+                  "max_tracked_clients": ("rate_limit_max_keys", int)},
     "validation": {"blocked_domains": ("blocked_domains", list), "known_shorteners": ("known_shorteners", list)},
 }
 SECRETS = frozenset({"admin_api_key", "ip_hash_salt"})
@@ -62,12 +70,17 @@ ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_MAX_URL_LENGTH": ("max_url_length", int),
     "URLSHORT_MAX_TTL_SECONDS": ("max_ttl_seconds", int),
     "URLSHORT_RATE_PER_MIN": ("create_rate_per_minute", int),
+    "URLSHORT_CREATE_BURST": ("create_burst", int),
+    "URLSHORT_REDIRECT_RATE_PER_MIN": ("redirect_rate_per_minute", int),
+    "URLSHORT_REDIRECT_BURST": ("redirect_burst", int),
+    "URLSHORT_RATE_LIMIT_MAX_CLIENTS": ("rate_limit_max_keys", int),
     "URLSHORT_BLOCKED_DOMAINS": ("blocked_domains", list),
     "URLSHORT_KNOWN_SHORTENERS": ("known_shorteners", list),
     "URLSHORT_ADMIN_API_KEY": ("admin_api_key", str),
     "URLSHORT_IP_SALT": ("ip_hash_salt", str),
 }
-MINIMUMS = {"code_length": 4, "max_url_length": 1, "max_ttl_seconds": 1, "create_rate_per_minute": 1}
+MINIMUMS = {"code_length": 4, "max_url_length": 1, "max_ttl_seconds": 1, "create_rate_per_minute": 1,
+            "create_burst": 1, "redirect_rate_per_minute": 1, "redirect_burst": 1, "rate_limit_max_keys": 1}
 
 
 def _domains(items: Sequence[object], where: str) -> frozenset[str]:

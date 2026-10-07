@@ -20,14 +20,16 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from . import __version__
 from .config import Settings
-from .errors import DomainError, Unauthorized
+from .errors import DomainError, RateLimited, Unauthorized
 from .logging_setup import configure_logging, request_id_var
 from .models import CreateLinkRequest, CreateLinkResponse, ErrorResponse, LinkResponse, StatsResponse
+from .ratelimit import GcraLimiter, RateLimiter
 from .service import ShortenerService, utcnow
 from .storage import Link, Repository, SqliteRepository
 
 log = logging.getLogger("urlshort.api")
-ERRORS: dict[int | str, dict[str, Any]] = {s: {"model": ErrorResponse} for s in (400, 401, 404, 409, 410, 503)}
+ERRORS: dict[int | str, dict[str, Any]] = {s: {"model": ErrorResponse}
+                                           for s in (400, 401, 404, 409, 410, 429, 503)}
 OWNER_MAX = 64
 
 
@@ -37,12 +39,21 @@ def error_response(status: int, code: str, message: str, headers: dict[str, str]
     return JSONResponse(status_code=status, content=body, headers=headers)
 
 
+def client_key(request: Request) -> str:
+    """Who to rate-limit. The direct peer address for now; trusted-proxy handling comes later."""
+    return request.client.host if request.client else "unknown"
+
+
 def create_app(settings: Settings | None = None, repo: Repository | None = None, *,
-               clock: Callable[[], datetime] = utcnow) -> FastAPI:
+               clock: Callable[[], datetime] = utcnow, monotonic: Callable[[], float] = time.monotonic) -> FastAPI:
     settings = settings or Settings.from_env()
     repository: Repository = repo or SqliteRepository(settings.db_path)
     configure_logging()
     service = ShortenerService(repository, settings, clock=clock)
+    create_limiter: RateLimiter = GcraLimiter(settings.create_rate_per_minute, settings.create_burst,
+                                              clock=monotonic, max_keys=settings.rate_limit_max_keys)
+    redirect_limiter: RateLimiter = GcraLimiter(settings.redirect_rate_per_minute, settings.redirect_burst,
+                                                clock=monotonic, max_keys=settings.rate_limit_max_keys)
     app = FastAPI(title="URL Shortener", version=__version__)
     app.state.service = service
 
@@ -60,6 +71,18 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
         if not is_admin(x_api_key):
             raise Unauthorized("valid X-API-Key required")
         return "admin"
+
+    def enforce(limiter: RateLimiter, request: Request, what: str) -> dict[str, str]:
+        decision = limiter.acquire(client_key(request))
+        if not decision.allowed:
+            log.warning("rate limited", extra={"limit": what, "retry_after": decision.headers()["Retry-After"]})
+            raise RateLimited(f"too many {what} requests; retry later", int(decision.headers()["Retry-After"]),
+                              decision.headers())
+        return decision.headers()
+
+    def limit_creates(request: Request, response: Response) -> None:
+        # Runs before the body is validated, so invalid requests count too (no free probing).
+        response.headers.update(enforce(create_limiter, request, "create"))
 
     @app.middleware("http")
     async def correlate(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -83,7 +106,8 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
 
     @app.exception_handler(DomainError)
     async def domain_error(_: Request, exc: DomainError) -> JSONResponse:
-        return error_response(exc.status, exc.code, exc.message)
+        headers = exc.headers if isinstance(exc, RateLimited) else None
+        return error_response(exc.status, exc.code, exc.message, headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -105,7 +129,7 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
 
     # ---------------------------------------------------------------- links
     @app.post("/api/v1/links", status_code=201, response_model=CreateLinkResponse, responses=ERRORS,
-              tags=["links"])
+              tags=["links"], dependencies=[Depends(limit_creates)])
     def create_link(body: CreateLinkRequest, response: Response,
                     x_owner: str | None = Header(default=None)) -> CreateLinkResponse:
         """Create a short link. Returns 201 when created, 200 when an identical permanent link is reused."""
@@ -142,6 +166,7 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
     @app.get("/{code}", responses=ERRORS, tags=["redirect"])
     def redirect(code: str, request: Request) -> RedirectResponse:
         """307 keeps the method; no-store means every click reaches us, so analytics stay accurate."""
+        enforce(redirect_limiter, request, "redirect")
         target = service.resolve(code, referrer=request.headers.get("referer"),
                                  user_agent=request.headers.get("user-agent"),
                                  client_ip=request.client.host if request.client else None)

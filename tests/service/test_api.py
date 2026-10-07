@@ -241,3 +241,67 @@ def test_one_links_token_does_not_open_another(client: TestClient) -> None:
     a, b = create(client, "https://example.com/a"), create(client, "https://example.com/b")
     resp = client.get(f"/api/v1/links/{b['code']}/stats", headers={"x-stats-token": str(a["stats_token"])})
     assert resp.status_code == 401
+
+
+# ---------------- rate limiting
+class Mono:
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def limited_app(repo: SqliteRepository, clock: FakeClock, mono: Mono) -> TestClient:
+    settings = Settings(create_rate_per_minute=60, create_burst=2, redirect_rate_per_minute=60, redirect_burst=2)
+    return TestClient(create_app(settings, repo, clock=clock, monotonic=mono))
+
+
+def test_create_rate_limit_returns_429_with_headers(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-RATELIMIT-1"""
+    mono = Mono()
+    client = limited_app(repo, clock, mono)
+    ok = client.post("/api/v1/links", json={"url": "https://example.com/1"})
+    assert ok.status_code == 201 and ok.headers["ratelimit-limit"] == "2" and ok.headers["ratelimit-remaining"] == "1"
+    assert client.post("/api/v1/links", json={"url": "https://example.com/2"}).status_code == 201
+    refused = client.post("/api/v1/links", json={"url": "https://example.com/3"})
+    assert refused.status_code == 429 and refused.json()["error"]["code"] == "rate_limited"
+    assert refused.headers["retry-after"] == "1" and refused.headers["ratelimit-remaining"] == "0"
+    mono.t += 1.0
+    assert client.post("/api/v1/links", json={"url": "https://example.com/3"}).status_code == 201
+
+
+def test_invalid_requests_count_towards_the_limit(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-RATELIMIT-1: malformed requests cannot be used to probe for free."""
+    client = limited_app(repo, clock, Mono())
+    for _ in range(2):
+        assert client.post("/api/v1/links", json={"nope": 1}).status_code == 400
+    assert client.post("/api/v1/links", json={"url": "https://example.com"}).status_code == 429
+
+
+def test_limits_are_per_client(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-RATELIMIT-1"""
+    settings = Settings(create_burst=1)
+    app = create_app(settings, repo, clock=clock, monotonic=Mono())
+    alice = TestClient(app, client=("203.0.113.1", 5000))
+    bob = TestClient(app, client=("203.0.113.2", 5000))
+    assert alice.post("/api/v1/links", json={"url": "https://example.com/a"}).status_code == 201
+    assert alice.post("/api/v1/links", json={"url": "https://example.com/b"}).status_code == 429
+    assert bob.post("/api/v1/links", json={"url": "https://example.com/c"}).status_code == 201
+
+
+def test_redirect_rate_limit(repo: SqliteRepository, clock: FakeClock) -> None:
+    """AC-RATELIMIT-2: code scanning and click inflation are throttled."""
+    client = limited_app(repo, clock, Mono())
+    code = create(client)["code"]
+    assert client.get(f"/{code}", follow_redirects=False).status_code == 307
+    assert client.get("/scan0001", follow_redirects=False).status_code == 404     # misses count too
+    refused = client.get(f"/{code}", follow_redirects=False)
+    assert refused.status_code == 429 and "retry-after" in refused.headers
+
+
+def test_unknown_peer_shares_one_key() -> None:
+    from starlette.requests import Request as StarletteRequest
+
+    from urlshort.api import client_key
+    assert client_key(StarletteRequest({"type": "http", "client": None, "headers": []})) == "unknown"

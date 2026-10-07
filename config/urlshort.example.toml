@@ -14,7 +14,13 @@ max_url_length = 2048
 max_ttl_seconds = 31536000           # 1 year
 
 [ratelimit]
-create_rate_per_minute = 60          # per client, link creation only
+# Per client (by IP for now). Rate is the steady pace; burst is how many requests may arrive
+# back-to-back after a quiet period. Exceeding either returns 429 with Retry-After.
+create_rate_per_minute = 60
+create_burst = 10
+redirect_rate_per_minute = 600       # high: protects against code scanning, not normal traffic
+redirect_burst = 100
+max_tracked_clients = 100000         # memory bound per limiter; idle clients are dropped first
 
 [validation]
 blocked_domains = []                 # e.g. ["evil.example"]; subdomains are blocked too

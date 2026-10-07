@@ -38,9 +38,10 @@ class LinkExpired(DomainError):
 class RateLimited(DomainError):
     code, status = "rate_limited", 429
 
-    def __init__(self, message: str, retry_after: int) -> None:
+    def __init__(self, message: str, retry_after: int, headers: dict[str, str] | None = None) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+        self.headers = headers or {"Retry-After": str(retry_after)}
 
 
 class CodeSpaceExhausted(DomainError):
