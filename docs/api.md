@@ -9,7 +9,7 @@ Interactive documentation is served at `/docs` (OpenAPI at `/openapi.json`).
 | `GET /api/v1/links/{code}` | Link details | 200 | 404 |
 | `GET /api/v1/links/{code}/stats` | Click analytics (`X-Stats-Token`, or admin `X-API-Key`) | 200 | 401, 404 |
 | `DELETE /api/v1/links/{code}` | Deactivate a link (admin, `X-API-Key`) | 204 | 401, 404 |
-| `GET /healthz` | Liveness | 200 | |
+| `GET /livez` (alias `/healthz`) | Liveness: restart the container if this fails | 200 | |
 | `GET /readyz` | Readiness (database reachable) | 200 | 503 |
 
 ## Create a link
@@ -59,6 +59,28 @@ readable by admins only. Owner API keys (planned) will replace per-link tokens f
 therefore cannot be followed across days, which is also why unique visitors are reported per day. Referrers
 keep only the domain, never the path or query string.
 
+## Security headers
+
+Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+and `X-Robots-Tag: noindex, nofollow`. API responses and redirects also carry
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` and `X-Frame-Options: DENY` (not the
+interactive docs page, which loads its assets from a CDN). When `base_url` is https,
+`Strict-Transport-Security` is added (`[http] hsts_max_age`, 0 disables). `/docs`, `/redoc` and
+`/openapi.json` can be hidden with `[http] expose_docs = false`.
+
+## CORS
+
+Off by default. List browser origins in `[http] cors_allow_origins` (exact `scheme://host[:port]`, or `*`).
+Credentials are never allowed; `X-Request-ID`, `Retry-After` and the `RateLimit-*` headers are exposed to
+browser code.
+
+## Behind a load balancer
+
+Set `[http] trusted_proxies` to the CIDR ranges of your own proxies. `X-Forwarded-For` is then read right to
+left, skipping trusted proxies, and the first untrusted address is used as the client for rate limits and
+analytics. Requests not arriving directly from a trusted proxy have the header ignored, so clients cannot
+spoof their address. Entries with ports or other malformed values are not trusted.
+
 ## Rate limits
 
 Limits are per client (currently the connecting IP address):
@@ -73,8 +95,8 @@ the allowance is full again), so clients can slow down before being refused. A r
 with `Retry-After` (seconds). Limits are configurable under `[ratelimit]` (see `config/urlshort.example.toml`).
 
 The limiter uses GCRA and is in-memory per process, so each instance enforces its own limit; a shared Redis
-backend using the same algorithm is planned for multi-instance deployments. Behind a load balancer, the client
-IP must come from a trusted proxy header (planned); until then every request appears to come from the proxy.
+backend using the same algorithm is planned for multi-instance deployments. Behind a load balancer, configure
+`trusted_proxies` (see above), otherwise every request appears to come from the proxy and shares one limit.
 
 ## Errors
 

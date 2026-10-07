@@ -16,7 +16,9 @@ status() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 post() { curl -s -X POST "$BASE/api/v1/links" -H 'content-type: application/json' -d "$1"; }
 field() { python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$1" "$2"; }
 
-check "healthz" "$(status "$BASE/healthz")" 200
+check "livez" "$(status "$BASE/livez")" 200
+check "healthz alias" "$(status "$BASE/healthz")" 200
+check "nosniff header" "$(curl -s -D - -o /dev/null "$BASE/livez" | grep -ci '^x-content-type-options: nosniff')" 1
 check "readyz" "$(status "$BASE/readyz")" 200
 
 body=$(post '{"url":"https://example.com/smoke"}')
