@@ -3,7 +3,8 @@
 A URL shortener service with core APIs, analytics and reliability features, built incrementally.
 Every change goes through the CI quality gates below.
 
-**Status:** walking skeleton — the service exposes `/healthz` only. Features arrive in later commits.
+**Status:** walking skeleton — the service exposes `/healthz` only.
+**Status:** foundations — `/healthz`, domain errors, URL/alias/TTL validation, validated configuration, SQLite storage and a hash-chained audit trail.
 
 ## Setup
 ```bash
