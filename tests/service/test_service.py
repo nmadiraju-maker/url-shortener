@@ -3,12 +3,13 @@ from collections.abc import Iterator
 
 import pytest
 
-from tests.service.conftest import FakeClock
 from urlshort.audit import AuditTrail
 from urlshort.config import Settings
 from urlshort.errors import AliasConflict, CodeSpaceExhausted, InvalidInput, LinkExpired, NotFound
 from urlshort.service import ShortenerService, utcnow
 from urlshort.storage import SqliteRepository
+
+from .helpers import FakeClock
 
 
 @pytest.fixture
