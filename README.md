@@ -3,7 +3,7 @@
 A URL shortener service with core APIs, analytics and reliability features, built incrementally.
 Every change goes through the CI quality gates below.
 
-**Status:** foundations — `/healthz`, plus domain errors, URL/alias/TTL validation and validated configuration. The link API arrives in later commits.
+**Status:** foundations — `/healthz`, domain errors, URL/alias/TTL validation, validated configuration, SQLite storage and a hash-chained audit trail.
 
 ## Setup
 ```bash
