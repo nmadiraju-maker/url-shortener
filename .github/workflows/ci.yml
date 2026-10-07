@@ -118,6 +118,27 @@ jobs:
         run: ./scripts/smoke_test.sh http://localhost:8000
       - name: Container runs as a non-root user
         run: test "$(docker exec urlshort id -u)" != "0"
+      - name: Production mode refuses an unsafe configuration
+        run: |
+          set +e
+          docker run --rm -e URLSHORT_ENV=production urlshort:ci > refused.log 2>&1
+          code=$?
+          set -e
+          cat refused.log
+          test "$code" = 2 || { echo "::error::expected exit code 2, got $code"; exit 1; }
+          grep -q '"refusing to start: invalid configuration"' refused.log
+          test "$(grep -vc '^{' refused.log)" = 0 || { echo "::error::non-JSON output on refusal"; exit 1; }
+      - name: Production mode starts with a safe configuration
+        run: |
+          docker run -d --name urlshort-prod -p 8001:8000 -e URLSHORT_ENV=production \
+            -e URLSHORT_BASE_URL=https://sho.rt.example -e URLSHORT_EXPOSE_DOCS=false \
+            -e URLSHORT_ADMIN_API_KEY=ci-only-admin-key-0123456789 -e URLSHORT_IP_SALT=ci-only-salt-0123456789 \
+            urlshort:ci
+          for i in $(seq 1 30); do curl -fs localhost:8001/readyz >/dev/null && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8001/livez)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8001/docs)" = 404
+          curl -s -D - -o /dev/null localhost:8001/livez | grep -qi '^strict-transport-security:'
+          docker logs urlshort-prod
       - name: Container logs
         if: always()
         run: docker logs urlshort

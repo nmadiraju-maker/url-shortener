@@ -14,7 +14,7 @@ from datetime import datetime
 from fastapi import FastAPI
 
 from . import __version__
-from .config import DEFAULT_IP_SALT, Settings
+from .config import DEFAULT_IP_SALT, Settings, ensure_safe_for_environment
 from .logging_setup import configure_logging
 from .ratelimit import GcraLimiter
 from .service import ShortenerService, utcnow
@@ -30,6 +30,7 @@ log = logging.getLogger("urlshort.api")
 def create_app(settings: Settings | None = None, repo: Repository | None = None, *,
                clock: Callable[[], datetime] = utcnow, monotonic: Callable[[], float] = time.monotonic) -> FastAPI:
     settings = settings or Settings.from_env()
+    ensure_safe_for_environment(settings)   # also covers Settings built in code, not only loaded from config
     configure_logging(settings.log_level, settings.log_redact_keys)
     _log_startup(settings)
     repository: Repository = repo or SqliteRepository(settings.db_path)
