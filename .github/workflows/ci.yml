@@ -108,8 +108,13 @@ jobs:
       - name: Build the service image
         run: docker build -t urlshort:ci .
       - name: Run the container
-        run: docker run -d --name urlshort -p 8000:8000 urlshort:ci
+        run: >
+          docker run -d --name urlshort -p 8000:8000
+          -e URLSHORT_ADMIN_API_KEY=ci-only-key -e URLSHORT_IP_SALT=ci-only-salt
+          urlshort:ci
       - name: Black-box smoke test against the container
+        env:
+          URLSHORT_ADMIN_API_KEY: ci-only-key
         run: ./scripts/smoke_test.sh http://localhost:8000
       - name: Container runs as a non-root user
         run: test "$(docker exec urlshort id -u)" != "0"
