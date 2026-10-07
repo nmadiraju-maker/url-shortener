@@ -59,6 +59,23 @@ readable by admins only. Owner API keys (planned) will replace per-link tokens f
 therefore cannot be followed across days, which is also why unique visitors are reported per day. Referrers
 keep only the domain, never the path or query string.
 
+## Rate limits
+
+Limits are per client (currently the connecting IP address):
+
+| Applies to | Default steady rate | Default burst |
+|---|---|---|
+| `POST /api/v1/links` (invalid requests count too) | 60 / minute | 10 |
+| `GET /{code}` (hits and misses) | 600 / minute | 100 |
+
+Responses to link creation carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds until
+the allowance is full again), so clients can slow down before being refused. A refused request returns 429
+with `Retry-After` (seconds). Limits are configurable under `[ratelimit]` (see `config/urlshort.example.toml`).
+
+The limiter uses GCRA and is in-memory per process, so each instance enforces its own limit; a shared Redis
+backend using the same algorithm is planned for multi-instance deployments. Behind a load balancer, the client
+IP must come from a trusted proxy header (planned); until then every request appears to come from the proxy.
+
 ## Errors
 
 Every error, including unexpected ones, has the same shape:
@@ -77,5 +94,6 @@ service logs. Send your own `X-Request-ID` to correlate across systems.
 | 404 | `not_found` |
 | 409 | `alias_conflict` |
 | 410 | `link_expired` |
+| 429 | `rate_limited` (with `Retry-After`) |
 | 500 | `internal_error` (details are logged, never returned) |
 | 503 | `code_generation_failed` |

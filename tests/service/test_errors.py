@@ -30,3 +30,9 @@ def test_each_error_has_stable_code_and_status(cls: type[DomainError], code: str
 def test_rate_limited_carries_retry_after() -> None:
     err = RateLimited("slow down", retry_after=30)
     assert (err.code, err.status, err.retry_after, err.message) == ("rate_limited", 429, 30, "slow down")
+
+
+def test_rate_limited_carries_headers() -> None:
+    err = RateLimited("slow down", retry_after=7, headers={"Retry-After": "7", "RateLimit-Limit": "10"})
+    assert err.headers == {"Retry-After": "7", "RateLimit-Limit": "10"}
+    assert RateLimited("x", retry_after=3).headers == {"Retry-After": "3"}

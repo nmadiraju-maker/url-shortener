@@ -80,3 +80,12 @@ def test_missing_file_and_bad_env_values(tmp_path: Path) -> None:
         load_settings(None, {"URLSHORT_RATE_PER_MIN": "fast"})
     with pytest.raises(ConfigError, match="at least 4"):
         load_settings(None, {"URLSHORT_CODE_LENGTH": "2"})
+
+
+def test_rate_limit_settings(tmp_path: Path) -> None:
+    path = write(tmp_path, "[ratelimit]\ncreate_burst = 5\nredirect_rate_per_minute = 120\nmax_tracked_clients = 500\n")
+    s = load_settings(path, {"URLSHORT_REDIRECT_BURST": "20"})
+    assert (s.create_burst, s.redirect_rate_per_minute, s.redirect_burst, s.rate_limit_max_keys) == (5, 120, 20, 500)
+    assert s.create_rate_per_minute == 60                       # untouched default
+    with pytest.raises(ConfigError, match="create_burst must be at least 1"):
+        load_settings(write(tmp_path, "[ratelimit]\ncreate_burst = 0\n"), {})

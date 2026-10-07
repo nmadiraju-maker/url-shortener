@@ -41,4 +41,15 @@ check "unknown field rejected" "$(status -X POST "$BASE/api/v1/links" -H 'conten
 check "admin needs key" "$(status -X DELETE "$BASE/api/v1/links/$code")" 401
 check "admin delete" "$(status -X DELETE -H "x-api-key: $KEY" "$BASE/api/v1/links/$code")" 204
 check "gone after delete" "$(status "$BASE/$code")" 404
+
+# Rate limiting last, so it cannot interfere with the checks above.
+headers=$(curl -s -D - -o /dev/null -X POST "$BASE/api/v1/links" -H 'content-type: application/json' \
+  -d '{"url":"https://example.com/headers"}')
+check "RateLimit headers present" "$(echo "$headers" | grep -ci '^ratelimit-remaining:')" 1
+limited=""
+for i in $(seq 1 30); do
+  s=$(status -X POST "$BASE/api/v1/links" -H 'content-type: application/json' -d "{\"url\":\"https://example.com/burst/$i\"}")
+  if [ "$s" = "429" ]; then limited=yes; break; fi
+done
+check "burst is rate limited" "${limited:-no}" yes
 echo "smoke test passed"
