@@ -22,7 +22,7 @@ from . import __version__
 from .config import Settings
 from .errors import DomainError, Unauthorized
 from .logging_setup import configure_logging, request_id_var
-from .models import CreateLinkRequest, ErrorResponse, LinkResponse
+from .models import CreateLinkRequest, CreateLinkResponse, ErrorResponse, LinkResponse, StatsResponse
 from .service import ShortenerService, utcnow
 from .storage import Link, Repository, SqliteRepository
 
@@ -51,10 +51,13 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
                             target_url=link.target_url, created_at=link.created_at,
                             expires_at=link.expires_at, is_active=link.is_active, click_count=link.click_count)
 
-    def require_admin(x_api_key: str | None = Header(default=None)) -> str:
-        # No configured key means admin endpoints are disabled, never open.
+    def is_admin(x_api_key: str | None) -> bool:
+        # No configured key means admin access is disabled, never open.
         # compare_digest takes the same time however close a guess is (no timing side channel).
-        if not settings.admin_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.admin_api_key):
+        return bool(settings.admin_api_key and x_api_key and hmac.compare_digest(x_api_key, settings.admin_api_key))
+
+    def require_admin(x_api_key: str | None = Header(default=None)) -> str:
+        if not is_admin(x_api_key):
             raise Unauthorized("valid X-API-Key required")
         return "admin"
 
@@ -101,20 +104,33 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
         return JSONResponse(status_code=200 if ok else 503, content={"status": "ready" if ok else "degraded"})
 
     # ---------------------------------------------------------------- links
-    @app.post("/api/v1/links", status_code=201, response_model=LinkResponse, responses=ERRORS, tags=["links"])
+    @app.post("/api/v1/links", status_code=201, response_model=CreateLinkResponse, responses=ERRORS,
+              tags=["links"])
     def create_link(body: CreateLinkRequest, response: Response,
-                    x_owner: str | None = Header(default=None)) -> LinkResponse:
+                    x_owner: str | None = Header(default=None)) -> CreateLinkResponse:
         """Create a short link. Returns 201 when created, 200 when an identical permanent link is reused."""
         owner = (x_owner or "anonymous").strip()[:OWNER_MAX] or "anonymous"
-        link, created = service.shorten(body.url, owner=owner, alias=body.custom_alias,
-                                        ttl_seconds=body.ttl_seconds)
-        if not created:
+        result = service.shorten(body.url, owner=owner, alias=body.custom_alias, ttl_seconds=body.ttl_seconds)
+        if not result.created:
             response.status_code = 200
-        return to_response(link)
+        response.headers["Cache-Control"] = "no-store"   # the body may contain a secret token
+        return CreateLinkResponse(**to_response(result.link).model_dump(), stats_token=result.stats_token)
 
     @app.get("/api/v1/links/{code}", response_model=LinkResponse, responses=ERRORS, tags=["links"])
     def get_link(code: str) -> LinkResponse:
         return to_response(service.get(code))
+
+    @app.get("/api/v1/links/{code}/stats", response_model=StatsResponse, responses=ERRORS, tags=["analytics"])
+    def link_stats(code: str, x_stats_token: str | None = Header(default=None),
+                   x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+        """Click analytics. Requires the link's X-Stats-Token, or the admin X-API-Key.
+
+        Without valid credentials the answer is always 401, even for codes that do not exist, so
+        the endpoint cannot be used to discover which codes are in use.
+        """
+        if not (is_admin(x_api_key) or service.can_view_stats(code, x_stats_token)):
+            raise Unauthorized("valid X-Stats-Token required")
+        return service.stats(code)
 
     @app.delete("/api/v1/links/{code}", status_code=204, responses=ERRORS, tags=["links"])
     def delete_link(code: str, actor: str = Depends(require_admin)) -> Response:
@@ -124,8 +140,11 @@ def create_app(settings: Settings | None = None, repo: Repository | None = None,
 
     # Defined last: it matches any single path segment.
     @app.get("/{code}", responses=ERRORS, tags=["redirect"])
-    def redirect(code: str) -> RedirectResponse:
-        """307 keeps the method; no-store means every click reaches us (accurate analytics later)."""
-        return RedirectResponse(service.resolve(code), status_code=307, headers={"Cache-Control": "no-store"})
+    def redirect(code: str, request: Request) -> RedirectResponse:
+        """307 keeps the method; no-store means every click reaches us, so analytics stay accurate."""
+        target = service.resolve(code, referrer=request.headers.get("referer"),
+                                 user_agent=request.headers.get("user-agent"),
+                                 client_ip=request.client.host if request.client else None)
+        return RedirectResponse(target, status_code=307, headers={"Cache-Control": "no-store"})
 
     return app

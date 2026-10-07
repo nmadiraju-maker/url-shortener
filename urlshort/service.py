@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import secrets
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlsplit
 
+from . import analytics
 from .audit import AuditTrail
 from .codegen import random_code
 from .config import Settings
 from .errors import AliasConflict, CodeSpaceExhausted, LinkExpired, NotFound
-from .storage import Link, Repository
+from .storage import Click, Link, Repository
 from .validation import validate_alias, validate_ttl, validate_url
 
 log = logging.getLogger("urlshort.service")
@@ -20,6 +26,19 @@ MAX_CODE_ATTEMPTS = 5
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def hash_token(token: str) -> str:
+    """Stats tokens are 256-bit random values, so a fast hash is enough (nothing to brute-force);
+    storing only the hash means a database leak does not reveal usable tokens."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class CreateResult:
+    link: Link
+    created: bool
+    stats_token: str | None   # returned once, on creation only; None when an existing link is reused
 
 
 class ShortenerService:
@@ -34,11 +53,12 @@ class ShortenerService:
 
     # ---------------------------------------------------------------- commands
     def shorten(self, url: str, *, owner: str, alias: str | None = None,
-                ttl_seconds: int | None = None) -> tuple[Link, bool]:
-        """Create a link and return (link, created).
+                ttl_seconds: int | None = None) -> CreateResult:
+        """Create a link.
 
         Idempotent for a repeated (owner, url) with no alias and no TTL: the existing permanent link
-        is returned with created=False, so client retries never create duplicates.
+        is returned with created=False, so client retries never create duplicates. A new stats token
+        is generated only for new links and is never retrievable later.
         """
         target = validate_url(url, max_length=self.settings.max_url_length,
                               blocked_domains=self.settings.blocked_domains,
@@ -47,25 +67,37 @@ class ShortenerService:
         if alias is None and ttl is None:
             existing = self.repo.find_reusable_link(owner, target)
             if existing is not None:
-                return existing, False
+                return CreateResult(existing, created=False, stats_token=None)
         now = self.clock()
         expires = now + timedelta(seconds=ttl) if ttl else None
+        token = secrets.token_urlsafe(32)
+        token_hash = hash_token(token)
         if alias is not None:
-            link = self._new_link(validate_alias(alias), target, owner, now, expires)
+            link = self._new_link(validate_alias(alias), target, owner, now, expires, token_hash)
             self.repo.insert_link(link)  # duplicate alias -> AliasConflict from the database
         else:
-            link = self._insert_with_generated_code(target, owner, now, expires)
+            link = self._insert_with_generated_code(target, owner, now, expires, token_hash)
         self.audit.record(when=now, actor=owner, action="link.create", target=link.code,
                           details={"target_url": target, "custom_alias": alias is not None,
                                    "expires_at": expires.isoformat() if expires else None})
         log.info("link created", extra={"code": link.code, "custom_alias": alias is not None})
-        return link, True
+        return CreateResult(link, created=True, stats_token=token)
 
-    def resolve(self, code: str) -> str:
-        """Return the target URL for an active, unexpired link."""
+    def resolve(self, code: str, *, referrer: str | None = None, user_agent: str | None = None,
+                client_ip: str | None = None) -> str:
+        """Return the target URL for an active, unexpired link and record the click."""
         link = self._get_active(code)
-        if link.expires_at is not None and self.clock() >= link.expires_at:
+        now = self.clock()
+        if link.expires_at is not None and now >= link.expires_at:
             raise LinkExpired(f"link '{code}' has expired")
+        family, is_bot = analytics.agent_family(user_agent)
+        ip_id, key_id = analytics.visitor_id(client_ip, self.settings.ip_hash_salt, now)
+        click = Click(code=code, ts=now, referrer_host=analytics.referrer_host(referrer), agent_family=family,
+                      is_bot=is_bot, ip_id=ip_id, ip_key_id=key_id)
+        try:
+            self.repo.record_click(click)
+        except Exception:  # fail open: analytics must never break a redirect (availability > completeness)
+            log.exception("click recording failed", extra={"code": code})
         return link.target_url
 
     def deactivate(self, code: str, *, actor: str) -> None:
@@ -81,6 +113,18 @@ class ShortenerService:
             raise NotFound(f"link '{code}' not found")
         return link
 
+    def can_view_stats(self, code: str, token: str | None) -> bool:
+        """True if the token belongs to this link. Constant-time compare; False for unknown links too,
+        so a caller without a valid token cannot learn which codes exist."""
+        link = self.repo.get_link(code)
+        if link is None or link.stats_token_hash is None or not token:
+            return False
+        return hmac.compare_digest(link.stats_token_hash, hash_token(token))
+
+    def stats(self, code: str) -> dict[str, Any]:
+        link = self.get(code)
+        return {"code": link.code, **analytics.summarise(self.repo.clicks_for(code))}
+
     # ---------------------------------------------------------------- helpers
     def _get_active(self, code: str) -> Link:
         link = self.repo.get_link(code)
@@ -89,15 +133,17 @@ class ShortenerService:
         return link
 
     @staticmethod
-    def _new_link(code: str, target: str, owner: str, now: datetime, expires: datetime | None) -> Link:
+    def _new_link(code: str, target: str, owner: str, now: datetime, expires: datetime | None,
+                  token_hash: str | None) -> Link:
         return Link(code=code, target_url=target, owner=owner, created_at=now, expires_at=expires,
-                    is_active=True, click_count=0)
+                    is_active=True, click_count=0, stats_token_hash=token_hash)
 
     def _insert_with_generated_code(self, target: str, owner: str, now: datetime,
-                                    expires: datetime | None) -> Link:
+                                    expires: datetime | None, token_hash: str | None) -> Link:
         """Insert with a fresh random code, retrying a bounded number of times on collision."""
         for attempt in range(1, MAX_CODE_ATTEMPTS + 1):
-            link = self._new_link(self.code_factory(self.settings.code_length), target, owner, now, expires)
+            code = self.code_factory(self.settings.code_length)
+            link = self._new_link(code, target, owner, now, expires, token_hash)
             try:
                 self.repo.insert_link(link)
                 return link

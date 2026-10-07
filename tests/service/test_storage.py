@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from urlshort.errors import AliasConflict
-from urlshort.storage import Click, Link, SqliteRepository
+from urlshort.storage import MIGRATIONS, SCHEMA_VERSION, SET_SCHEMA_VERSION, Click, Link, SqliteRepository
 
 T0 = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
 
@@ -26,7 +26,7 @@ def link(code: str = "abc1234", url: str = "https://example.com/a", owner: str =
 
 def click(code: str = "abc1234", *, bot: bool = False, at: datetime = T0) -> Click:
     return Click(code=code, ts=at, referrer_host="news.example", agent_family="bot" if bot else "chrome",
-                 is_bot=bot, ip_hash="h1")
+                 is_bot=bot, ip_id=-42, ip_key_id="2026-01-15")
 
 
 # ---------------- links
@@ -125,3 +125,46 @@ def test_file_database_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
     assert r._conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert r._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
     r.close()
+
+
+# ---------------- schema versioning
+V1_SCHEMA = """
+CREATE TABLE links (code TEXT PRIMARY KEY, target_url TEXT NOT NULL, owner TEXT NOT NULL, created_at TEXT NOT NULL,
+    expires_at TEXT, is_active INTEGER NOT NULL DEFAULT 1, click_count INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE clicks (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL REFERENCES links(code), ts TEXT NOT NULL,
+    referrer_host TEXT, agent_family TEXT NOT NULL, is_bot INTEGER NOT NULL, ip_hash TEXT);
+INSERT INTO links VALUES ('old0001', 'https://example.com/old', 'team-a', '2026-01-01T00:00:00+00:00', NULL, 1, 3);
+INSERT INTO clicks(code, ts, agent_family, is_bot) VALUES ('old0001', '2026-01-01T00:00:00+00:00', 'chrome', 0);
+"""
+
+
+def test_database_from_previous_version_is_upgraded_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "v1.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(V1_SCHEMA)
+    conn.close()
+    r = SqliteRepository(str(path))
+    old = r.get_link("old0001")
+    assert old is not None and old.click_count == 3 and old.stats_token_hash is None     # data kept
+    assert r._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    r.record_click(click("old0001"))                                                     # new columns usable
+    assert [c.ip_id for c in r.clicks_for("old0001")] == [None, -42]
+    r.close()
+    again = SqliteRepository(str(path))                                                  # idempotent reopen
+    assert again.get_link("old0001") is not None
+    again.close()
+
+
+def test_schema_version_constants_agree() -> None:
+    assert max(MIGRATIONS) == SCHEMA_VERSION and SET_SCHEMA_VERSION.endswith(f"= {SCHEMA_VERSION}")
+
+
+def test_fresh_database_is_at_current_version(repo: SqliteRepository) -> None:
+    assert repo._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+def test_stats_token_hash_round_trip(repo: SqliteRepository) -> None:
+    repo.insert_link(Link(code="tok0001", target_url="https://example.com/t", owner="o", created_at=T0,
+                          expires_at=None, is_active=True, click_count=0, stats_token_hash="ab" * 32))
+    stored = repo.get_link("tok0001")
+    assert stored is not None and stored.stats_token_hash == "ab" * 32
