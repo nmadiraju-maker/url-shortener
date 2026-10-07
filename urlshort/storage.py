@@ -7,6 +7,8 @@ Guarantees:
   * The audit chain is appended under `BEGIN IMMEDIATE`, so separate connections or processes
     cannot both chain onto the same previous record (no forks).
   * Only a duplicate short code becomes AliasConflict; every other database error propagates.
+  * Schema changes are versioned with PRAGMA user_version and are expand-only (new nullable
+    columns), so older databases are upgraded in place and older code still runs against them.
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ CREATE TABLE IF NOT EXISTS links (
     created_at  TEXT NOT NULL,
     expires_at  TEXT,
     is_active   INTEGER NOT NULL DEFAULT 1,
-    click_count INTEGER NOT NULL DEFAULT 0
+    click_count INTEGER NOT NULL DEFAULT 0,
+    stats_token_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_links_owner_target ON links(owner, target_url);
 CREATE TABLE IF NOT EXISTS clicks (
@@ -38,7 +41,8 @@ CREATE TABLE IF NOT EXISTS clicks (
     referrer_host TEXT,
     agent_family  TEXT NOT NULL,
     is_bot        INTEGER NOT NULL,
-    ip_hash       TEXT
+    ip_id         INTEGER,
+    ip_key_id     TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_clicks_code_ts ON clicks(code, ts);
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -52,6 +56,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     hash      TEXT NOT NULL
 );
 """
+SCHEMA_VERSION = 2
+# version -> steps added in that version: (table, column, complete DDL). Expand-only and nullable.
+# Every statement is a literal; nothing is built from strings at runtime.
+MIGRATIONS: dict[int, tuple[tuple[str, str, str], ...]] = {
+    2: (("links", "stats_token_hash", "ALTER TABLE links ADD COLUMN stats_token_hash TEXT"),
+        ("clicks", "ip_id", "ALTER TABLE clicks ADD COLUMN ip_id INTEGER"),
+        ("clicks", "ip_key_id", "ALTER TABLE clicks ADD COLUMN ip_key_id TEXT")),
+}
+SET_SCHEMA_VERSION = "PRAGMA user_version = 2"
 
 
 @dataclass(frozen=True)
@@ -63,6 +76,7 @@ class Link:
     expires_at: datetime | None
     is_active: bool
     click_count: int
+    stats_token_hash: str | None = None   # sha256 of the per-link stats token; the token itself is never stored
 
 
 @dataclass(frozen=True)
@@ -72,7 +86,8 @@ class Click:
     referrer_host: str | None
     agent_family: str
     is_bot: bool
-    ip_hash: str | None
+    ip_id: int | None          # keyed visitor ID (see analytics.visitor_id); never the raw IP
+    ip_key_id: str | None      # which daily key produced ip_id (UTC date)
 
 
 @dataclass(frozen=True)
@@ -126,26 +141,44 @@ class SqliteRepository:
             if path != ":memory:":
                 self._conn.execute("PRAGMA journal_mode = WAL")  # readers don't block behind writers
             self._conn.executescript(SCHEMA)
+            self._migrate()
 
     def close(self) -> None:
         self._conn.close()
+
+    def _migrate(self) -> None:
+        """Bring older databases up to SCHEMA_VERSION (caller holds the lock).
+
+        Fresh databases already have every column from SCHEMA; the column check makes each step
+        idempotent, so it is safe for both fresh and older databases.
+        """
+        version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        for target in sorted(v for v in MIGRATIONS if v > version):
+            for table, column, ddl in MIGRATIONS[target]:
+                columns = {r["name"] for r in self._conn.execute("SELECT name FROM pragma_table_info(?)", (table,))}
+                if column not in columns:
+                    self._conn.execute(ddl)
+        if version < SCHEMA_VERSION:
+            self._conn.execute(SET_SCHEMA_VERSION)
 
     @staticmethod
     def _to_link(row: sqlite3.Row) -> Link:
         return Link(code=row["code"], target_url=row["target_url"], owner=row["owner"],
                     created_at=_dt(row["created_at"]),
                     expires_at=_dt(row["expires_at"]) if row["expires_at"] else None,
-                    is_active=bool(row["is_active"]), click_count=row["click_count"])
+                    is_active=bool(row["is_active"]), click_count=row["click_count"],
+                    stats_token_hash=row["stats_token_hash"])
 
     # ---------------------------------------------------------------- links
     def insert_link(self, link: Link) -> None:
         params = (link.code, link.target_url, link.owner, _iso(link.created_at),
-                  _iso(link.expires_at) if link.expires_at else None, int(link.is_active), link.click_count)
+                  _iso(link.expires_at) if link.expires_at else None, int(link.is_active), link.click_count,
+                  link.stats_token_hash)
         try:
             with self._lock:
                 self._conn.execute(
-                    "INSERT INTO links(code, target_url, owner, created_at, expires_at, is_active, click_count)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)", params)
+                    "INSERT INTO links(code, target_url, owner, created_at, expires_at, is_active, click_count,"
+                    " stats_token_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", params)
         except sqlite3.IntegrityError as exc:
             # The database is the final judge of uniqueness (no check-then-insert race). Only a
             # duplicate primary key means "code taken"; other violations are bugs and must surface.
@@ -183,10 +216,10 @@ class SqliteRepository:
             self._conn.execute("BEGIN")
             try:
                 self._conn.execute(
-                    "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_hash)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (click.code, _iso(click.ts), click.referrer_host, click.agent_family, int(click.is_bot),
-                     click.ip_hash))
+                     click.ip_id, click.ip_key_id))
                 if not click.is_bot:
                     self._conn.execute("UPDATE links SET click_count = click_count + 1 WHERE code = ?", (click.code,))
                 self._conn.execute("COMMIT")
@@ -198,7 +231,8 @@ class SqliteRepository:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM clicks WHERE code = ? ORDER BY ts, id", (code,)).fetchall()
         return [Click(code=r["code"], ts=_dt(r["ts"]), referrer_host=r["referrer_host"],
-                      agent_family=r["agent_family"], is_bot=bool(r["is_bot"]), ip_hash=r["ip_hash"])
+                      agent_family=r["agent_family"], is_bot=bool(r["is_bot"]), ip_id=r["ip_id"],
+                      ip_key_id=r["ip_key_id"])
                 for r in rows]
 
     # ---------------------------------------------------------------- audit

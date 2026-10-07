@@ -31,6 +31,28 @@ class LinkResponse(BaseModel):
     click_count: int
 
 
+class CreateLinkResponse(LinkResponse):
+    stats_token: str | None = Field(
+        None, description="Secret for GET /api/v1/links/{code}/stats. Returned once, only when the link is "
+                          "created; null when an existing link is reused. Store it; it cannot be recovered.")
+
+
+class ReferrerCount(BaseModel):
+    host: str
+    clicks: int
+
+
+class StatsResponse(BaseModel):
+    code: str
+    total_clicks: int
+    bot_clicks: int
+    clicks_by_day: dict[str, int]
+    unique_visitors_by_day: dict[str, int]
+    top_referrers: list[ReferrerCount]
+    agents: dict[str, int]
+    last_click_at: datetime | None
+
+
 class ErrorBody(BaseModel):
     code: str
     message: str

@@ -102,9 +102,10 @@ def test_unknown_code_is_404_with_request_id(client: TestClient) -> None:
     assert client.get("/api/v1/links/nope").status_code == 404
 
 
-def test_get_link_details(client: TestClient) -> None:
+def test_get_link_details_never_include_the_stats_token(client: TestClient) -> None:
     link = create(client)
-    assert client.get(f"/api/v1/links/{link['code']}").json() == link
+    details = client.get(f"/api/v1/links/{link['code']}").json()
+    assert "stats_token" not in details and details == {k: v for k, v in link.items() if k != "stats_token"}
 
 
 # ---------------- aliases and expiry
@@ -186,3 +187,57 @@ def test_every_request_is_logged_with_its_request_id(client: TestClient) -> None
     entry = next(e for e in map(json.loads, stream.getvalue().splitlines()) if e["msg"] == "request")
     assert entry["request_id"] == "trace-42"
     assert entry["ctx"]["status"] == 200 and entry["ctx"]["path"] == "/healthz" and entry["ctx"]["duration_ms"] >= 0
+
+
+# ---------------- protected analytics
+def test_create_returns_stats_token_once_and_is_not_cached(client: TestClient) -> None:
+    """AC-ANALYTICS-4"""
+    first = client.post("/api/v1/links", json={"url": "https://example.com/tok"})
+    again = client.post("/api/v1/links", json={"url": "https://example.com/tok"})
+    assert first.status_code == 201 and first.json()["stats_token"] and first.headers["cache-control"] == "no-store"
+    assert again.status_code == 200 and again.json()["stats_token"] is None
+
+
+def test_stats_with_token(client: TestClient) -> None:
+    """AC-ANALYTICS-1 AC-ANALYTICS-2 AC-ANALYTICS-3"""
+    link = create(client, "https://example.com/s")
+    code, token = link["code"], str(link["stats_token"])
+    chrome = {"user-agent": "Mozilla/5.0 Chrome/126.0"}
+    client.get(f"/{code}", headers={**chrome, "referer": "https://news.example/post/1"}, follow_redirects=False)
+    client.get(f"/{code}", headers=chrome, follow_redirects=False)
+    client.get(f"/{code}", headers={"user-agent": "Googlebot/2.1"}, follow_redirects=False)
+    resp = client.get(f"/api/v1/links/{code}/stats", headers={"x-stats-token": token})
+    stats = resp.json()
+    assert resp.status_code == 200 and stats["code"] == code
+    assert stats["total_clicks"] == 2 and stats["bot_clicks"] == 1
+    assert stats["clicks_by_day"] == {"2026-01-15": 2} and stats["unique_visitors_by_day"] == {"2026-01-15": 1}
+    assert {"host": "news.example", "clicks": 1} in stats["top_referrers"]
+    assert stats["agents"] == {"chrome": 2} and stats["last_click_at"].startswith("2026-01-15T12:00:00")
+    assert client.get(f"/api/v1/links/{code}").json()["click_count"] == 2
+
+
+@pytest.mark.parametrize("headers", [{}, {"x-stats-token": "wrong"}, {"x-api-key": "wrong"}])
+def test_stats_require_valid_credentials(client: TestClient, headers: dict[str, str]) -> None:
+    """AC-ANALYTICS-4"""
+    code = create(client)["code"]
+    resp = client.get(f"/api/v1/links/{code}/stats", headers=headers)
+    assert resp.status_code == 401 and resp.json()["error"]["code"] == "unauthorized"
+
+
+def test_stats_do_not_reveal_which_codes_exist(client: TestClient) -> None:
+    """AC-ANALYTICS-4: without credentials, unknown and existing codes look the same."""
+    other_token = str(create(client)["stats_token"])
+    assert client.get("/api/v1/links/nope/stats", headers={"x-stats-token": other_token}).status_code == 401
+
+
+def test_admin_can_read_any_stats(client: TestClient) -> None:
+    code = create(client)["code"]
+    admin = {"x-api-key": "test-admin-key"}
+    assert client.get(f"/api/v1/links/{code}/stats", headers=admin).status_code == 200
+    assert client.get("/api/v1/links/nope/stats", headers=admin).status_code == 404
+
+
+def test_one_links_token_does_not_open_another(client: TestClient) -> None:
+    a, b = create(client, "https://example.com/a"), create(client, "https://example.com/b")
+    resp = client.get(f"/api/v1/links/{b['code']}/stats", headers={"x-stats-token": str(a["stats_token"])})
+    assert resp.status_code == 401

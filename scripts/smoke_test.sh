@@ -26,6 +26,13 @@ check "redirect status" "$(status "$BASE/$code")" 307
 check "redirect target" "$(curl -s -o /dev/null -w '%{redirect_url}' "$BASE/$code")" "https://example.com/smoke"
 check "idempotent create" "$(field "$(post '{"url":"https://example.com/smoke"}')" code)" "$code"
 check "link details" "$(status "$BASE/api/v1/links/$code")" 200
+token=$(field "$body" stats_token)
+check "stats need a token" "$(status "$BASE/api/v1/links/$code/stats")" 401
+check "stats with token" "$(status -H "x-stats-token: $token" "$BASE/api/v1/links/$code/stats")" 200
+curl -s -o /dev/null -A "Mozilla/5.0 Chrome/126.0" "$BASE/$code"     # one browser-like click
+stats=$(curl -s -H "x-stats-token: $token" "$BASE/api/v1/links/$code/stats")
+check "browser click counted" "$(field "$stats" total_clicks)" 1
+check "curl clicks are bots" "$(field "$stats" bot_clicks)" 2             # curl's User-Agent marks it a bot
 check "unknown code" "$(status "$BASE/nope-not-here")" 404
 check "ssrf blocked" "$(status -X POST "$BASE/api/v1/links" -H 'content-type: application/json' \
   -d '{"url":"http://169.254.169.254/"}')" 400
