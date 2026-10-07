@@ -60,7 +60,7 @@ def test_from_env_uses_process_environment(monkeypatch: pytest.MonkeyPatch) -> N
     ("[service]\ncode_length = \"7\"\n", "expected an integer"),
     ("[service]\nbase_url = 5\n", "expected a string"),
     ("[validation]\nblocked_domains = \"x.com\"\n", "expected a list"),
-    ("[validation]\nblocked_domains = [1]\n", "list of domain strings"),
+    ("[validation]\nblocked_domains = [1]\n", "list of strings"),
     ("[service]\nadmin_api_key = \"oops\"\n", "secret"),
     ("[service]\ncode_length = 3\n", "at least 4"),
     ("[service]\nmax_ttl_seconds = 0\n", "at least 1"),
@@ -89,3 +89,38 @@ def test_rate_limit_settings(tmp_path: Path) -> None:
     assert s.create_rate_per_minute == 60                       # untouched default
     with pytest.raises(ConfigError, match="create_burst must be at least 1"):
         load_settings(write(tmp_path, "[ratelimit]\ncreate_burst = 0\n"), {})
+
+
+def test_logging_settings(tmp_path: Path) -> None:
+    from urlshort.logging_setup import DEFAULT_REDACT_KEYS
+    path = write(tmp_path, '[logging]\nlevel = "debug"\nredact_keys = ["X-Session"]\nrequest_sample_rate = 0.25\n')
+    s = load_settings(path, {})
+    assert s.log_level == "DEBUG" and s.log_request_sample_rate == 0.25
+    assert s.log_redact_keys == DEFAULT_REDACT_KEYS | {"x-session"}           # added to, never replacing, defaults
+    assert load_settings(None, {"URLSHORT_LOG_REQUEST_SAMPLE_RATE": "1"}).log_request_sample_rate == 1.0
+    assert load_settings(write(tmp_path, "[logging]\nrequest_sample_rate = 0\n"), {}).log_request_sample_rate == 0.0
+
+
+@pytest.mark.parametrize("body,message", [
+    ('[logging]\nlevel = "LOUD"\n', "log level must be one of"),
+    ("[logging]\nrequest_sample_rate = 1.5\n", "between 0 and 1"),
+    ("[logging]\nrequest_sample_rate = true\n", "expected a number"),
+    ('[logging]\nrequest_sample_rate = "half"\n', "expected a number"),
+])
+def test_invalid_logging_settings(tmp_path: Path, body: str, message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        load_settings(write(tmp_path, body), {})
+
+
+def test_bad_float_in_environment() -> None:
+    with pytest.raises(ConfigError, match="URLSHORT_LOG_REQUEST_SAMPLE_RATE"):
+        load_settings(None, {"URLSHORT_LOG_REQUEST_SAMPLE_RATE": "half"})
+
+
+def test_summary_masks_secrets() -> None:
+    summary = Settings(admin_api_key="k3y", ip_hash_salt="s4lt", blocked_domains=frozenset({"b", "a"})).summary()
+    assert summary["admin_api_key"] == "set" and summary["ip_hash_salt"] == "set"
+    assert "k3y" not in str(summary) and "s4lt" not in str(summary)
+    assert summary["blocked_domains"] == ["a", "b"]
+    unset = Settings().summary()
+    assert unset["admin_api_key"] == "NOT SET" and unset["ip_hash_salt"] == "NOT SET"   # default salt = not set

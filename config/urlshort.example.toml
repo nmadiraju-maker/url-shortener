@@ -27,3 +27,10 @@ blocked_domains = []                 # e.g. ["evil.example"]; subdomains are blo
 # Shortener domains rejected as targets. Replaces the built-in list when set.
 # The service's own host (from base_url) is always rejected as well.
 known_shorteners = ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "rebrand.ly"]
+
+[logging]
+level = "INFO"                       # DEBUG, INFO, WARNING, ERROR or CRITICAL
+# Extra field names to redact in logs. These ADD to the built-in list (authorization, api_key,
+# password, secret, token, stats_token, client_ip, ip, email, cookie, ...); they never replace it.
+redact_keys = []
+request_sample_rate = 1.0            # share of successful request lines kept (0..1); errors always kept
