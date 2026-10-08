@@ -4,8 +4,8 @@
 review, QA, security, docs, release). **Agents do the work; the engine decides whether it passes.** An agent
 cannot approve itself, skip a gate, bypass a policy or touch its own guardrails.
 
-This document covers the core (graph, engine, policy, approvals, audit, metrics). The agents and the
-command-line interface arrive in the next commit; the end-to-end scenarios after that.
+This document covers the core (graph, engine, policy, approvals, audit, metrics), the agents and the
+command-line interface. The end-to-end scenarios that deliver real features are added separately.
 
 ## Stage lifecycle
 
@@ -84,6 +84,45 @@ A **block** fails the attempt and rolls back; the violations become feedback for
   the design and requirement behind it. Decisions are recorded with rationale and decider.
 - **Metrics:** attempt success rate, retries, rollbacks, fallbacks, reworks, retry and rollback
   frequency, MTTR (time from a stage's first failure to its recovery) and end-to-end latency.
+
+## Agents
+
+Each agent does one stage's work and communicates only through versioned artifacts in the shared context.
+They run **offline and deterministically**: requirements and design use a domain catalog
+(`sdlc/agents/catalog.py`), and development applies reviewed change plans (`scenarios/changes/<feature>.py`),
+optionally replaying recorded flawed first drafts so the gates can be shown catching them. QA, security and
+docs do real work on the real code. LLM-backed agents are planned behind the same contract and gates.
+
+| Agent | Output | What it actually does |
+|---|---|---|
+| `requirements` | `requirements` | Stories with acceptance criteria (IDs matching the tests); flags vague terms and escalates assumptions or open questions; existing features become regression-only |
+| `impact` | `impact` | Parses the code (AST): symbols, imports, routes with their router prefixes, tables; reverse import closure; the approved change scope for CHG-003 |
+| `design` | `design` | Components, API contract (or "unchanged" for cross-cutting work), data model, ADRs, STRIDE threat model, retention; proposes a `migration_review` stage when the schema changes |
+| `migration` | `migration_plan` | Forward and rollback DDL; checks the change is additive (backward compatible) |
+| `development` | `code_change` | Applies change plans with one conventional commit per story; refuses ambiguous patch anchors; can materialise an exact baseline from a git ref (never the working tree) |
+| `review` | `review_report` | Static review of every changed file; high findings send work back (rework); tracks findings resolved across rounds |
+| `qa` | `qa_report` | Runs the real test suite with coverage; traces every acceptance criterion to a passing test; defects go back to development, infrastructure failures are retried |
+| `security` | `security_report` | Policy scan of the whole codebase and dependency pinning |
+| `docs` / `docs_static` | `docs` | API reference from the live OpenAPI spec and a changelog; static fallback reads routes from source |
+| `release` | `release` | Readiness checklist (artifacts, review, tests, coverage, ACs, security, audit chain); the tag is applied only after human approval |
+
+## Command line
+
+```bash
+python -m sdlc.cli run scenarios/<name>.json --approvals scenarios/approvals/<name>.json [--run-dir DIR]
+python -m sdlc.cli resume <run-dir> --approvals <decisions.json>     # or --interactive
+python -m sdlc.cli stop <run-dir> --reason "incident"                # kill switch: safe-stop
+python -m sdlc.cli verify <run-dir>                                  # check the audit hash chain
+python -m sdlc.cli promote <run-dir> --approver "<name>" [--target <repo>]
+```
+
+Exit codes: `0` completed, `3` paused for approval, `1` failed or stopped, `2` audit chain broken.
+Each run writes `run-report.md` (graph state, approvals, policy results, re-plans, lineage, metrics,
+timeline), `metrics.json`, `audit.jsonl`, `state.json` and versioned `artifacts/`.
+
+`promote` is the human-gated step that brings a run's commits into a repository. It refuses unless the
+run completed, the audit chain verifies, and the target has no uncommitted changes; a conflict aborts and
+leaves the target untouched; the promotion itself is recorded in the run's audit log with the approver.
 
 ## Quality bar
 

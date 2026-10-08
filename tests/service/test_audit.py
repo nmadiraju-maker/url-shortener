@@ -49,6 +49,7 @@ def test_timestamps_normalised_to_utc_and_naive_refused(repo: SqliteRepository) 
     "UPDATE audit_log SET prev_hash = 'f' WHERE id = 3",                  # broken link
 ])
 def test_tampering_is_detected(repo: SqliteRepository, tamper: str) -> None:
+    """AC-AUDIT-1"""
     trail = AuditTrail(repo)
     for n in range(3):
         trail.record(when=T0, actor="team-a", action="link.create", target=f"c{n}", details={"url": "x"})
