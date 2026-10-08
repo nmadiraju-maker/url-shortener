@@ -49,6 +49,7 @@ class StatsResponse(BaseModel):
     total_clicks: int
     bot_clicks: int
     clicks_by_day: dict[str, int]
+    clicks_by_hour: dict[str, int]          # UTC hour "00"-"23" -> human clicks
     unique_visitors_by_day: dict[str, int]
     top_referrers: list[ReferrerCount]
     agents: dict[str, int]

@@ -67,6 +67,7 @@ def summarise(clicks: Sequence[Click]) -> dict[str, Any]:
     """Aggregate clicks for the stats endpoint. Bots are counted separately and excluded elsewhere."""
     human = [c for c in clicks if not c.is_bot]
     by_day = Counter(c.ts.astimezone(UTC).date().isoformat() for c in human)
+    by_hour = Counter(f"{c.ts.astimezone(UTC).hour:02d}" for c in human)
     uniques: dict[str, set[int]] = {}
     for c in human:
         if c.ip_id is not None and c.ip_key_id is not None:
@@ -77,6 +78,7 @@ def summarise(clicks: Sequence[Click]) -> dict[str, Any]:
         "total_clicks": len(human),
         "bot_clicks": len(clicks) - len(human),
         "clicks_by_day": dict(sorted(by_day.items())),
+        "clicks_by_hour": dict(sorted(by_hour.items())),
         "unique_visitors_by_day": {day: len(ids) for day, ids in sorted(uniques.items())},
         "top_referrers": [{"host": host, "clicks": n} for host, n in referrers.most_common(TOP_N)],
         "agents": dict(sorted(agents.items())),
