@@ -11,7 +11,7 @@ addopts = "-q"
 
 [tool.coverage.run]
 branch = true
-source = ["urlshort"]
+source = ["urlshort", "sdlc"]
 
 [tool.coverage.report]
 show_missing = true
@@ -31,4 +31,7 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["urlshort"]
+packages = ["urlshort", "sdlc"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["urlshort", "sdlc"]   # explicit, so local and CI runs always agree on import grouping
