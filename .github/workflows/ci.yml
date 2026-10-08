@@ -178,8 +178,10 @@ jobs:
         run: python -m sdlc.cli run scenarios/brownfield.json --approvals scenarios/approvals/brownfield.json --run-dir runs/brownfield
       - name: Ambiguous - clarification and mid-run re-plan
         run: python -m sdlc.cli run scenarios/ambiguous.json --approvals scenarios/approvals/ambiguous.json --run-dir runs/ambiguous
+      - name: Ambiguous, interpreted by the LLM agent (replays the labelled cassette; no API key in CI)
+        run: python -m sdlc.cli run scenarios/ambiguous-llm.json --approvals scenarios/approvals/ambiguous.json --run-dir runs/ambiguous-llm
       - name: Audit chains verify
-        run: for run in greenfield brownfield ambiguous; do python -m sdlc.cli verify "runs/$run"; done
+        run: for run in greenfield brownfield ambiguous ambiguous-llm; do python -m sdlc.cli verify "runs/$run"; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -41,12 +41,21 @@ def render_markdown(req: dict[str, Any]) -> str:
 class RequirementsAgent(Agent):
     name = "requirements"
 
+    def interpret(self, ctx: AgentContext) -> tuple[list[str], list[dict[str, Any]], str]:
+        """Which catalog features and which vague terms the request contains, and who decided.
+
+        This is the only step an LLM-backed agent replaces; building stories and acceptance criteria from
+        the result stays deterministic, so every AC is still traceable to tests.
+        """
+        text: str = ctx.params["requirement"]
+        return match_features(text), detect_ambiguities(text), "catalog (keyword matching)"
+
     def run(self, ctx: AgentContext) -> StageResult:
         text: str = ctx.params["requirement"]
         clarifications: dict[str, Any] = ctx.params.get("clarifications", {})
-        features = match_features(text)
+        features, detected, interpreted_by = self.interpret(ctx)
         ambiguities, assumed = [], []
-        for amb in detect_ambiguities(text):
+        for amb in detected:
             clar = clarifications.get(amb["term"])
             if clar is not None:
                 chosen = clar if clar in FEATURES else None
@@ -73,7 +82,7 @@ class RequirementsAgent(Agent):
                                 {"id": f"AC-{f['ac_prefix']}-{n}", "given": g, "when": w, "then": t}
                                 for n, (g, w, t) in enumerate(f["ac"], 1)]})
         unresolved = [a["term"] for a in ambiguities if a["resolved_by"] == "unresolved"]
-        req = {"title": ctx.params.get("title", "URL shortener"), "source": text,
+        req = {"title": ctx.params.get("title", "URL shortener"), "source": text, "interpreted_by": interpreted_by,
                "problem_statement": ctx.params.get("problem_statement",
                                                    "Provide a reliable, secure URL shortening service with analytics."),
                "features": features, "stories": stories, "ambiguities": ambiguities, "nfrs": NFRS,

@@ -1,0 +1,10 @@
+{
+  "_note": "Entries marked 'hand-written fixture' were written by hand to exercise validation and fallback in CI; they are NOT model output. Record real responses with: ANTHROPIC_API_KEY=... SDLC_LLM_RECORD=1 make ambiguous-llm",
+  "entries": {
+    "1b45376ec23d3877d8798c342734f578eecac84d5d912676c2ade85d5986e511": {
+      "model": "claude-sonnet-5-5",
+      "response": "{\"features\": [\"shorten\", \"analytics\"], \"ambiguities\": [{\"term\": \"safer\", \"question\": \"Safer against what: browser-level hardening (security headers) or phishing links disguised with look-alike domains?\", \"options\": [\"headers\", \"lookalike\"]}, {\"term\": \"track more\", \"question\": \"Which additional analytics dimension is needed: time of day, geography or device?\", \"options\": [\"hourly\"]}, {\"term\": \"more stuff\", \"question\": \"'More stuff' is unbounded: which measurable outcome is expected?\", \"options\": []}, {\"term\": \"fast\", \"question\": \"What latency target, at what load (e.g. p99 redirect < 50 ms at 500 rps)?\", \"options\": []}]}",
+      "source": "hand-written fixture"
+    }
+  }
+}
