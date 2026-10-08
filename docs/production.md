@@ -14,6 +14,7 @@ is not a crash.
 | `expose_docs = false` | Unnecessary attack surface in production |
 | `cors_allow_origins` has no `*` | Any website could call the API from a visitor's browser |
 | Log level is not `DEBUG` | Verbose logs are more likely to leak data |
+| `URLSHORT_METRICS_TOKEN` set while `/metrics` is enabled | Metric labels reveal routes and traffic patterns |
 | `hsts_max_age` at least one day | Prevents downgrade to http |
 
 The checks run when settings are loaded **and** inside `create_app`, so settings built in code cannot
@@ -27,6 +28,7 @@ URLSHORT_BASE_URL=https://sho.rt
 URLSHORT_EXPOSE_DOCS=false
 URLSHORT_ADMIN_API_KEY=<from your secret store, 24+ characters>
 URLSHORT_IP_SALT=<from your secret store, 16+ characters>
+URLSHORT_METRICS_TOKEN=<from your secret store; give the same token to Prometheus>
 URLSHORT_TRUSTED_PROXIES=<your load balancer CIDRs>
 ```
 

@@ -11,6 +11,7 @@ from ..auth import Principal, authenticate
 from ..config import Settings
 from ..errors import RateLimited, Unauthorized
 from ..models import LinkResponse
+from ..observability import Metrics
 from ..ratelimit import RateLimiter
 from ..service import ShortenerService
 from ..storage import Link, Repository
@@ -27,6 +28,7 @@ class AppContext:
     create_limiter: RateLimiter
     redirect_limiter: RateLimiter
     proxies: TrustedProxies
+    metrics: Metrics
 
     def client_ip(self, request: Request) -> str | None:
         return request_client_ip(request, self.proxies)
@@ -48,6 +50,7 @@ class AppContext:
         decision = limiter.acquire(self.client_ip(request) or "unknown")
         headers = decision.headers()
         if not decision.allowed:
+            self.metrics.rate_limited.labels(what).inc()
             log.warning("rate limited", extra={"limit": what, "retry_after": headers["Retry-After"]})
             raise RateLimited(f"too many {what} requests; retry later", int(headers["Retry-After"]), headers)
         return headers

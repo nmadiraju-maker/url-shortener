@@ -317,8 +317,9 @@ def test_requests_without_a_peer_share_one_rate_limit_key(repo: SqliteRepository
             return Decision(allowed=True, limit=1, remaining=0, reset_after=1.0, retry_after=0.0)
 
     limiter = RecordingLimiter()
+    from urlshort.observability import Metrics
     ctx = AppContext(settings=Settings(), repository=repo, service=ShortenerService(repo, Settings()),
-                     create_limiter=limiter, redirect_limiter=limiter, proxies=TrustedProxies())
+                     create_limiter=limiter, redirect_limiter=limiter, proxies=TrustedProxies(), metrics=Metrics())
     ctx.enforce(limiter, StarletteRequest({"type": "http", "client": None, "headers": []}), "create")
     assert limiter.keys == ["unknown"]
 
@@ -491,3 +492,16 @@ def test_infrastructure_is_wired_only_when_configured(repo: SqliteRepository, mo
     assert seen == ["redis://cache:6379/0"]
     assert client.post("/api/v1/links", json={"url": "https://example.com/1"}).status_code == 201
     assert client.post("/api/v1/links", json={"url": "https://example.com/2"}).status_code == 429  # shared limiter
+
+
+def test_storage_unavailable_tells_clients_when_to_retry(repo: SqliteRepository, clock: FakeClock,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    from urlshort.errors import StorageUnavailable
+    client = TestClient(create_app(Settings(), repo, clock=clock))
+
+    def down(code: str) -> None:
+        raise StorageUnavailable("database unavailable; please retry")
+    monkeypatch.setattr(repo, "get_link", down)
+    resp = client.get("/abc1234", follow_redirects=False)
+    assert resp.status_code == 503 and resp.headers["retry-after"] == "5"
+    assert resp.json()["error"]["code"] == "storage_unavailable"

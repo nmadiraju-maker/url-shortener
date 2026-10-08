@@ -10,11 +10,14 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from opentelemetry import propagate
+from opentelemetry.trace import Span, SpanKind, Status, StatusCode, Tracer
 from starlette.middleware.cors import CORSMiddleware
 
 from ..config import Settings
-from ..errors import DomainError, RateLimited
+from ..errors import DomainError, RateLimited, StorageUnavailable
 from ..logging_setup import request_id_var, sampled
+from ..observability import Metrics
 
 log = logging.getLogger("urlshort.api")
 DOCS_PATHS = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"})
@@ -43,7 +46,7 @@ def security_headers(settings: Settings, path: str) -> dict[str, str]:
     return headers
 
 
-def install_middleware(app: FastAPI, settings: Settings) -> None:
+def install_middleware(app: FastAPI, settings: Settings, metrics: Metrics, tracer: Tracer) -> None:
     if settings.cors_allow_origins:   # off unless origins are configured
         app.add_middleware(
             CORSMiddleware, allow_origins=sorted(settings.cors_allow_origins), allow_credentials=False,
@@ -59,29 +62,45 @@ def install_middleware(app: FastAPI, settings: Settings) -> None:
         rid = request.headers.get("x-request-id") or uuid.uuid4().hex
         token = request_id_var.set(rid)
         started = time.perf_counter()
-        try:
+        parent = propagate.extract(dict(request.headers))      # continue an incoming W3C traceparent
+        with tracer.start_as_current_span(f"HTTP {request.method}", context=parent, kind=SpanKind.SERVER) as span:
             try:
-                response = await call_next(request)
-            except Exception:  # last line of defence: unexpected bugs still get the JSON format + request ID
-                log.exception("unhandled error", extra={"method": request.method, "path": request.url.path})
-                response = error_response(500, "internal_error", "an unexpected error occurred")
-            response.headers["x-request-id"] = rid
-            for name, value in security_headers(settings, request.url.path).items():
-                response.headers.setdefault(name, value)
-            # Errors are always logged; successful requests can be sampled (decided by request ID).
-            if response.status_code >= 400 or sampled(rid, settings.log_request_sample_rate):
-                log.info("request", extra={"method": request.method, "path": request.url.path,
-                                           "status": response.status_code,
-                                           "duration_ms": round((time.perf_counter() - started) * 1000, 2)})
-            return response
-        finally:
-            request_id_var.reset(token)
+                return await _handle(request, call_next, rid, started, span)
+            finally:
+                request_id_var.reset(token)
+
+    async def _handle(request: Request, call_next: Callable[[Request], Awaitable[Response]], rid: str,
+                      started: float, span: Span) -> Response:
+        try:
+            response = await call_next(request)
+        except Exception:  # last line of defence: unexpected bugs still get the JSON format + request ID
+            log.exception("unhandled error", extra={"method": request.method, "path": request.url.path})
+            response = error_response(500, "internal_error", "an unexpected error occurred")
+        route_obj = request.scope.get("route")
+        route = getattr(route_obj, "path", "unmatched")       # the template, never the raw path
+        elapsed = time.perf_counter() - started
+        metrics.observe(request.method, route, response.status_code, elapsed)
+        span.update_name(f"{request.method} {route}")
+        span.set_attributes({"http.request.method": request.method, "http.route": route,
+                             "http.response.status_code": response.status_code, "urlshort.request_id": rid})
+        if response.status_code >= 500:
+            span.set_status(Status(StatusCode.ERROR))
+        response.headers["x-request-id"] = rid
+        for name, value in security_headers(settings, request.url.path).items():
+            response.headers.setdefault(name, value)
+        # Errors are always logged; successful requests can be sampled (decided by request ID).
+        if response.status_code >= 400 or sampled(rid, settings.log_request_sample_rate):
+            log.info("request", extra={"method": request.method, "path": request.url.path,
+                                       "status": response.status_code,
+                                       "duration_ms": round(elapsed * 1000, 2)})
+        return response
 
 
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def domain_error(_: Request, exc: DomainError) -> JSONResponse:
-        headers = exc.headers if isinstance(exc, RateLimited) else None
+        headers = exc.headers if isinstance(exc, RateLimited) else (
+            {"Retry-After": "5"} if isinstance(exc, StorageUnavailable) else None)
         return error_response(exc.status, exc.code, exc.message, headers)
 
     @app.exception_handler(RequestValidationError)

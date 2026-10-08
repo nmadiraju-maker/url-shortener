@@ -175,6 +175,7 @@ jobs:
           docker run -d --name urlshort-prod -p 8001:8000 -e URLSHORT_ENV=production \
             -e URLSHORT_BASE_URL=https://sho.rt.example -e URLSHORT_EXPOSE_DOCS=false \
             -e URLSHORT_ADMIN_API_KEY=ci-only-admin-key-0123456789 -e URLSHORT_IP_SALT=ci-only-salt-0123456789 \
+            -e URLSHORT_METRICS_TOKEN=ci-only-metrics-token-0123456 \
             urlshort:ci
           for i in $(seq 1 30); do curl -fs localhost:8001/readyz >/dev/null && break; sleep 1; done
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8001/livez)" = 200
