@@ -43,6 +43,7 @@ open runs/brownfield/run-report.md
 | Safety | SSRF protection, credentials and shortener chains rejected, look-alike (mixed-script) domains rejected |
 | Abuse | GCRA rate limits on creates and redirects, `RateLimit-*` and `Retry-After` headers |
 | Identity | Owner and admin API keys (hashed, revocable), per-caller audit identity, secrets from files, signed audit checkpoints (`docs/security.md`) |
+| Observability | Prometheus metrics, OpenTelemetry traces joined to logs by trace ID, Grafana dashboard and alert rules, load-test and chaos evidence (`docs/observability.md`, `docs/evidence/`) |
 | Operations | JSON logs with redaction, liveness/readiness probes, security headers, CORS, trusted proxies, production profile that refuses unsafe settings, non-root container |
 
 Configuration: `config/urlshort.example.toml` (every setting, documented) or `URLSHORT_*` environment
@@ -85,7 +86,7 @@ Regenerate the generated documents with `python scripts/generate_sdlc_docs.py`.
 ## Honest limitations
 
 Agents run deterministically (prepared change plans; an LLM-backed requirements agent with fallback). No
-real model responses are recorded here. Observability (metrics, tracing, load tests) is planned. Details:
-`docs/final-summary.md`.
+real model responses are recorded here. Performance numbers come from a single-core sandbox: NFR-1 is not yet
+demonstrated. Details: `docs/final-summary.md`.
 
 Built with an AI assistant (Claude); see `docs/ai-usage.md`.
