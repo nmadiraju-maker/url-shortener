@@ -41,7 +41,11 @@ stateDiagram-v2
 | **Pause / resume** | A missing approval decision pauses the run with state saved; `resume` re-asks and continues. |
 
 All state transitions happen on one coordinator thread, so the state machine stays deterministic even
-when agents run in parallel.
+when agents run in parallel. Every reset bumps the stage's **generation**; a result from a run that started
+under an older generation is stale and is discarded (its file changes rolled back), and the stage runs again.
+This is what guarantees, for example, that a human amendment made while a stage is still running is never
+lost to that run's outdated result. Workspace rollbacks and commits take the same lock that file-changing
+stages hold, so they never interleave with a stage that is writing.
 
 ## Human approval
 

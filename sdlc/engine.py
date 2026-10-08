@@ -88,6 +88,9 @@ class Orchestrator:
         self.policy_log: list[dict[str, Any]] = []
         self.run_status = "NEW"
         self._ws_lock = Lock()
+        # Bumped every time a stage is reset. A run started under an older generation is stale: its result
+        # must never be committed (e.g. an amendment changed the stage's inputs while it was running).
+        self._generation: dict[str, int] = {}
         self._failures = 0
         self._missing_agents()
 
@@ -105,7 +108,7 @@ class Orchestrator:
         self.run_status = "RUNNING"
         self.audit.emit("run.start", stages=list(self.graph.stages), layers=self.graph.layers())
         started = self.clock()
-        running: dict[Future[_Outcome], str] = {}
+        running: dict[Future[_Outcome], tuple[str, int]] = {}
         with ThreadPoolExecutor(max_workers=self.cfg.max_workers) as pool:
             while True:
                 stop = self._stop_reason(started)
@@ -117,13 +120,16 @@ class Orchestrator:
                 for sid in self._ready(running):
                     self.status[sid] = RUNNING
                     self.audit.emit("stage.start", stage=sid, agent=self.graph.stages[sid].agent)
-                    running[pool.submit(self._execute, sid)] = sid
+                    running[pool.submit(self._execute, sid)] = (sid, self._generation.get(sid, 0))
                 if not running:
                     break
                 done, _ = wait(list(running), return_when=FIRST_COMPLETED)
                 for fut in done:
-                    running.pop(fut)
-                    self._handle(fut.result())
+                    sid, generation = running.pop(fut)
+                    if generation != self._generation.get(sid, 0):
+                        self._discard_stale(sid, fut.result())
+                    else:
+                        self._handle(fut.result())
                 if self.run_status in {"PAUSED", "STOPPED"}:
                     self._drain(running)
                     break
@@ -139,8 +145,8 @@ class Orchestrator:
         (self.run_dir / "STOP").write_text(reason)
 
     # ================================================================ scheduling
-    def _ready(self, running: dict[Future[_Outcome], str]) -> list[str]:
-        busy = set(running.values())
+    def _ready(self, running: dict[Future[_Outcome], tuple[str, int]]) -> list[str]:
+        busy = {sid for sid, _ in running.values()}
         out = []
         for sid in self.graph.topological_order():
             spec = self.graph.stages[sid]
@@ -171,12 +177,13 @@ class Orchestrator:
             return "failure budget exhausted"
         return None
 
-    def _drain(self, running: dict[Future[_Outcome], str]) -> None:
+    def _drain(self, running: dict[Future[_Outcome], tuple[str, int]]) -> None:
         for fut in list(running):
             outcome = fut.result()  # cooperative stop: let in-flight work finish, then discard
-            sid = running.pop(fut)
+            sid, _ = running.pop(fut)
             if outcome.ok and self.graph.stages[sid].mutates_workspace and sid in self.snapshots:
-                self.ws.rollback(self.snapshots[sid])
+                with self._ws_lock:
+                    self.ws.rollback(self.snapshots[sid])
             self.status[sid] = PENDING_S
             self.audit.emit("stage.discarded", stage=sid, reason="run stopping")
 
@@ -363,9 +370,10 @@ class Orchestrator:
                             based_on=derived)
         commit = None
         if spec.mutates_workspace:
-            commit = self.ws.commit(result.commit_message or f"chore({sid}): stage output")
-            for tag in result.tags:  # irreversible actions happen only after gates + approval
-                self.ws.git("tag", "-a", tag, "-m", f"{tag} released by orchestrator run {self.run_id}")
+            with self._ws_lock:
+                commit = self.ws.commit(result.commit_message or f"chore({sid}): stage output")
+                for tag in result.tags:  # irreversible actions happen only after gates + approval
+                    self.ws.git("tag", "-a", tag, "-m", f"{tag} released by orchestrator run {self.run_id}")
         self.status[sid] = SUCCEEDED
         self.ctx.feedback.pop(sid, None)
         self.audit.emit("stage.succeeded", stage=sid, agent=agent, summary=result.summary, commit=commit,
@@ -420,11 +428,16 @@ class Orchestrator:
             self._reset(done, reason)
 
     def _reset(self, stages: list[str], reason: str) -> None:
+        for s in stages:   # any run of these stages still in flight is now stale
+            self._generation[s] = self._generation.get(s, 0) + 1
         mutating = [s for s in stages if self.graph.stages[s].mutates_workspace and s in self.snapshots]
         if mutating:  # roll the workspace back to before the earliest affected mutating stage
             order = self.graph.topological_order()
             first = min(mutating, key=order.index)
-            self.ws.rollback(self.snapshots[first])
+            # A file-changing stage holds this lock for its whole run, so waiting for it here means the
+            # rollback happens after any in-flight writer has finished, and also undoes its changes.
+            with self._ws_lock:
+                self.ws.rollback(self.snapshots[first])
             for s in mutating:
                 self.metrics.mark(s, "rollbacks")
                 self.snapshots.pop(s, None)
@@ -433,9 +446,23 @@ class Orchestrator:
             self.status[s] = PENDING_S
             self.reasons[s] = reason
 
+    def _discard_stale(self, sid: str, out: _Outcome) -> None:
+        """Drop the result of a run that was reset while in flight; the stage runs again from PENDING.
+
+        If the stage had not yet taken its snapshot when it was reset, its changes are still in the
+        workspace: roll them back now (the reset has already handled the other case).
+        """
+        spec = self.graph.stages[sid]
+        if out.ok and spec.mutates_workspace and sid in self.snapshots:
+            with self._ws_lock:
+                self.ws.rollback(self.snapshots.pop(sid))
+            self.metrics.mark(sid, "rollbacks")
+        self.audit.emit("stage.stale_result_discarded", stage=sid, reason=self.reasons.get(sid, "stage was reset"))
+
     def _rollback_stage(self, sid: str) -> None:
         if self.graph.stages[sid].mutates_workspace and sid in self.snapshots:
-            self.ws.rollback(self.snapshots.pop(sid))
+            with self._ws_lock:
+                self.ws.rollback(self.snapshots.pop(sid))
             self.metrics.mark(sid, "rollbacks")
             self.audit.emit("stage.rollback", stage=sid, to="pre-stage snapshot")
 
