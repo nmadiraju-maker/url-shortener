@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import hmac
+
+from fastapi import APIRouter, Header, Response
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .. import __version__
+from ..errors import Unauthorized
 from .context import AppContext
 
 
@@ -17,6 +21,15 @@ def build(ctx: AppContext) -> APIRouter:
     def livez() -> dict[str, str]:
         """Liveness: the process is up and serving requests. Restart the container if this fails."""
         return {"status": "ok", "version": __version__}
+
+    if ctx.settings.metrics_enabled:
+        @router.get("/metrics", include_in_schema=False)
+        def metrics(authorization: str | None = Header(default=None)) -> Response:
+            """Prometheus metrics. With a metrics token configured, `Authorization: Bearer <token>` is required."""
+            token = ctx.settings.metrics_token
+            if token and not hmac.compare_digest(authorization or "", f"Bearer {token}"):
+                raise Unauthorized("valid metrics token required")
+            return Response(generate_latest(ctx.metrics.registry), media_type=CONTENT_TYPE_LATEST)
 
     @router.get("/readyz")
     def readyz() -> JSONResponse:

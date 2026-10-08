@@ -32,12 +32,13 @@ from typing import Any, TextIO
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 
 REQUEST_ID_ATTR = "urlshort_request_id"
+TRACE_ID_ATTR = "urlshort_trace_id"
 REDACTED = "[REDACTED]"
 DEFAULT_REDACT_KEYS = frozenset({"authorization", "x_api_key", "api_key", "password", "secret", "token",
                                  "stats_token", "x_stats_token", "client_ip", "ip", "email", "cookie"})
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 _BUILTIN = (set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__)
-            | {"message", "asctime", "taskName", REQUEST_ID_ATTR,
+            | {"message", "asctime", "taskName", REQUEST_ID_ATTR, TRACE_ID_ATTR,
                "color_message"})   # uvicorn's copy of msg with terminal colour codes: noise in a log store
 
 
@@ -51,6 +52,9 @@ class JsonFormatter(logging.Formatter):
             # Captured on the caller's thread when queued; read live otherwise (e.g. uvicorn's lines).
             "request_id": getattr(record, REQUEST_ID_ATTR, None) or request_id_var.get(),
         }
+        trace_id = getattr(record, TRACE_ID_ATTR, None)
+        if trace_id:
+            payload["trace_id"] = trace_id
         ctx = {k: v for k, v in record.__dict__.items() if k not in _BUILTIN}
         if ctx:
             payload["ctx"] = ctx
@@ -90,6 +94,8 @@ class ContextFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         setattr(record, REQUEST_ID_ATTR, request_id_var.get())
+        from .observability import current_trace_id  # local import: logging is set up before tracing
+        setattr(record, TRACE_ID_ATTR, current_trace_id())
         return True
 
 

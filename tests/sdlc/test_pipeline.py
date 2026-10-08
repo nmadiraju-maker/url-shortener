@@ -12,7 +12,8 @@ from sdlc.approvals import DecisionFileApprovals
 from sdlc.engine import Orchestrator
 
 REPO = Path(__file__).resolve().parents[2]
-SERVICE_PATHS = ["pyproject.toml", "requirements.txt", "urlshort", "tests/__init__.py", "tests/service", "config"]
+SERVICE_PATHS = ["pyproject.toml", "requirements.txt", "urlshort", "tests/__init__.py", "tests/service", "config",
+                 "deploy"]   # dashboards and alerts: a service test checks the metrics they reference
 
 SCENARIO = {
     "name": "pipeline-test",
