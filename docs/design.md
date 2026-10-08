@@ -88,6 +88,8 @@ Migrations are expand-only (new nullable columns) and literal SQL; older databas
 | 012 | Event-driven analytics via a transactional outbox and Redis Streams (optional) | No lost or double-counted clicks; redirects decoupled from analytics writes; replay | Dual writes; Kafka (no need at this scale; adapter possible behind the bus port) |
 | 013 | Hashed, revocable owner and admin API keys; per-caller audit identity | Least privilege; who did what is provable; X-Owner cannot be spoofed with a key | Shared admin key only; OAuth (not needed for a service API) |
 | 014 | Secrets from files; signed audit checkpoints | Vault/Kubernetes compatible without an SDK; detects full rewrites and truncation | Vault SDK; anchoring to a blockchain |
+| 015 | Prometheus metrics by route template; OpenTelemetry traces with trace IDs in logs | Bounded cardinality; one ID joins logs and traces | Raw-path labels; logs only |
+| 016 | Circuit breaker on Postgres; throttled failure logs | Outages degrade gracefully and quietly (measured by chaos drills) | Wait for the pool on every request; log every failure |
 
 ### Security model (STRIDE)
 
@@ -163,5 +165,5 @@ hash-chained audit log; metrics include success rate, retry and rollback frequen
 
 See `docs/final-summary.md`. Done: Postgres + Redis (cache, Bloom filter, distributed rate limiting);
 event-driven analytics with an outbox (`docs/events.md`); owner/admin API keys, secret files and signed audit
-checkpoints (`docs/security.md`). Planned: rollups and HyperLogLog in the aggregator; metrics, tracing and
-load-test evidence.
+checkpoints (`docs/security.md`); metrics, tracing, load-test and chaos evidence (`docs/observability.md`,
+`docs/evidence/`). Planned: rollups and HyperLogLog in the aggregator; a multi-instance load test for NFR-1.

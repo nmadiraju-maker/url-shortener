@@ -37,6 +37,8 @@ A URL shortener service and a governed, agentic SDLC orchestrator that delivered
   verified by passing tests; 0 findings from the review agent over every source file.
 - Postgres, Redis and event-pipeline adapters tested against real servers (29 tests, 100% coverage, own CI
   job), including reclaiming a crashed consumer's messages and end-to-end delivery with duplicates and replay.
+- Load tests on three configurations with zero errors; chaos drills (Redis and Postgres outages) that found two
+  problems, fixed and re-measured (`docs/evidence/`).
 - CI on every pull request: ruff, `mypy --strict`, bandit, pip-audit, tests on Python 3.11 and 3.12,
   Docker image + smoke test + production-mode checks, and four SDLC scenarios with audit-chain verification.
 - Concurrency-sensitive code checked under load: click caps (40 parallel redirects), rate limiter (50
@@ -64,6 +66,7 @@ A URL shortener service and a governed, agentic SDLC orchestrator that delivered
 ## Known limitations
 
 - No real LLM responses are recorded in the repository (see `docs/ai-usage.md`).
+- NFR-1 (redirect p99 < 50 ms at 500 rps) is not demonstrated: the only load tests ran on a single CPU core.
 - Greenfield replays the reviewed v0.9.0 baseline; it demonstrates governance, not code generation.
 - The audit trail is tamper-evident, not tamper-proof: signed checkpoints detect rewrites, and shipping them
   to write-once storage is an operational step.
