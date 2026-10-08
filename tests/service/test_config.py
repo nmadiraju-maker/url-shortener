@@ -156,3 +156,15 @@ def test_invalid_http_settings(tmp_path: Path, body: str, message: str) -> None:
 def test_bad_boolean_in_environment() -> None:
     with pytest.raises(ConfigError, match="URLSHORT_EXPOSE_DOCS"):
         load_settings(None, {"URLSHORT_EXPOSE_DOCS": "maybe"})
+
+
+def test_infrastructure_urls_are_env_only_secrets(tmp_path: Path) -> None:
+    s = load_settings(None, {"URLSHORT_DATABASE_URL": "postgresql://u:pw@db/urlshort",
+                             "URLSHORT_REDIS_URL": "redis://:pw@cache:6379/0", "URLSHORT_CACHE_TTL": "30"})
+    assert (s.database_url, s.redis_url, s.cache_ttl_seconds) == ("postgresql://u:pw@db/urlshort",
+                                                                  "redis://:pw@cache:6379/0", 30)
+    summary = s.summary()
+    assert summary["database_url"] == "set" and summary["redis_url"] == "set" and "pw" not in str(summary)
+    assert load_settings(write(tmp_path, "[cache]\nttl_seconds = 5\n"), {}).cache_ttl_seconds == 5
+    with pytest.raises(ConfigError):                                    # secrets may not live in the file
+        load_settings(write(tmp_path, '[service]\ndatabase_url = "postgresql://u:pw@db/x"\n'), {})

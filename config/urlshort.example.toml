@@ -45,3 +45,8 @@ trusted_proxies = []                 # e.g. ["10.0.0.0/8", "fd00::/8"]
 cors_allow_origins = []              # browser origins allowed to call the API; empty = CORS off
 expose_docs = true                   # /docs, /redoc and /openapi.json; consider false in production
 hsts_max_age = 31536000              # Strict-Transport-Security, sent only when base_url is https; 0 disables
+
+[cache]
+# Only used when URLSHORT_REDIS_URL is set. Database and Redis URLs are secrets: environment only
+# (URLSHORT_DATABASE_URL, URLSHORT_REDIS_URL). See docs/infrastructure.md.
+ttl_seconds = 60                     # how long a cached link may be served

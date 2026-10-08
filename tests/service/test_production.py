@@ -77,3 +77,7 @@ def test_safe_production_app_serves_traffic_without_docs() -> None:
 
 def test_summary_reports_environment() -> None:
     assert SAFE.summary()["environment"] == "production"
+
+
+def test_postgres_satisfies_the_persistent_storage_check() -> None:
+    assert production_problems(replace(SAFE, db_path=":memory:", database_url="postgresql://u:p@db/x")) == []

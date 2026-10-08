@@ -72,6 +72,9 @@ class Settings:
                 out[f.name] = value
         return out
     admin_api_key: str = ""
+    database_url: str = ""                  # postgresql://... (env only: may hold a password); empty = SQLite
+    redis_url: str = ""                     # redis://... (env only); enables the cache, Bloom filter, shared limits
+    cache_ttl_seconds: int = 60             # how long a cached link may be served (click_count may lag this much)
     ip_hash_salt: str = "change-me"         # DEFAULT_IP_SALT; replace via URLSHORT_IP_SALT
     blocked_domains: frozenset[str] = field(default_factory=frozenset)
     known_shorteners: frozenset[str] = KNOWN_SHORTENERS
@@ -98,13 +101,17 @@ FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
     "validation": {"blocked_domains": ("blocked_domains", list), "known_shorteners": ("known_shorteners", list)},
     "logging": {"level": ("log_level", str), "redact_keys": ("log_redact_keys", list),
                 "request_sample_rate": ("log_request_sample_rate", float)},
+    "cache": {"ttl_seconds": ("cache_ttl_seconds", int)},
     "http": {"trusted_proxies": ("trusted_proxies", list), "cors_allow_origins": ("cors_allow_origins", list),
              "expose_docs": ("expose_docs", bool), "hsts_max_age": ("hsts_max_age", int)},
 }
-SECRETS = frozenset({"admin_api_key", "ip_hash_salt"})
+SECRETS = frozenset({"admin_api_key", "ip_hash_salt", "database_url", "redis_url"})
 ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_ENV": ("environment", str),
     "URLSHORT_DB_PATH": ("db_path", str),
+    "URLSHORT_DATABASE_URL": ("database_url", str),
+    "URLSHORT_REDIS_URL": ("redis_url", str),
+    "URLSHORT_CACHE_TTL": ("cache_ttl_seconds", int),
     "URLSHORT_BASE_URL": ("base_url", str),
     "URLSHORT_CODE_LENGTH": ("code_length", int),
     "URLSHORT_MAX_URL_LENGTH": ("max_url_length", int),
@@ -127,8 +134,8 @@ ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_IP_SALT": ("ip_hash_salt", str),
 }
 MINIMUMS = {"code_length": 4, "max_url_length": 1, "max_ttl_seconds": 1, "create_rate_per_minute": 1,
-            "create_burst": 1, "redirect_rate_per_minute": 1, "redirect_burst": 1, "rate_limit_max_keys": 1,
-            "hsts_max_age": 0}
+            "cache_ttl_seconds": 1, "create_burst": 1, "redirect_rate_per_minute": 1, "redirect_burst": 1,
+            "rate_limit_max_keys": 1, "hsts_max_age": 0}
 BOOL_WORDS = {"true": True, "1": True, "yes": True, "on": True, "false": False, "0": False, "no": False, "off": False}
 
 
@@ -263,7 +270,7 @@ def production_problems(settings: Settings) -> list[str]:
                         "without it abusive links cannot be taken down")
     if not s.base_url.startswith("https://"):
         problems.append("base_url must use https")
-    if s.db_path == ":memory:":
+    if not s.database_url and s.db_path == ":memory:":
         problems.append("db_path must be a file: an in-memory database loses every link on restart")
     if s.expose_docs:
         problems.append("expose_docs must be false")
