@@ -119,6 +119,13 @@ def test_pass_through_methods_reach_the_database(redis_client: Redis) -> None:
     assert cache.find_reusable_link("o", "https://example.com/x") is not None and cache.all_codes() == ["pas0001"]
     assert cache.append_audit("t", "a", "x", "y", "{}", lambda prev: ("0" * 64, "1" * 64)) == "1" * 64
     assert len(cache.audit_records()) == 1 and cache.ping() is True
+    e = Click(code="pas0001", ts=T0, referrer_host=None, agent_family="chrome", is_bot=False, ip_id=None,
+              ip_key_id=None, event_id="evt-1")
+    cache.record_click(e, as_event=True)
+    pending = cache.outbox_pending(10)
+    assert len(pending) == 1 and cache.outbox_backlog() == 1
+    cache.mark_published([pending[0][0]], T0)
+    assert cache.outbox_backlog() == 0 and cache.apply_click_event(e) is True and cache.apply_click_event(e) is False
 
 
 # ---------------------------------------------------------------- wiring and multi-instance behaviour
