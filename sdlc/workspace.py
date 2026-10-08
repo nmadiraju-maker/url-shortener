@@ -7,6 +7,10 @@ from functools import cache
 from pathlib import Path
 
 _ENV_ID = ["-c", "user.name=sdlc-dev-agent", "-c", "user.email=sdlc-bot@example.local"]
+# Byproducts of running code and tests inside the workspace (e.g. by the QA agent). They must never be
+# committed or reviewed as "changes", whatever the seeded project's own .gitignore says.
+DEFAULT_EXCLUDES = ("__pycache__/", "*.pyc", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".coverage",
+                    "*.db", "*.db-wal", "*.db-shm")
 
 
 @cache
@@ -19,12 +23,23 @@ def git_executable() -> str:
     return path
 
 
+def _text_or_empty(path: Path) -> str:
+    """Source text of a changed file, or "" for binary content: binary files still count as changed (change
+    control sees them), but there is no source text for the content scans to read."""
+    try:
+        return path.read_text()
+    except UnicodeDecodeError:
+        return ""
+
+
 class Workspace:
     def __init__(self, root: Path) -> None:
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         if not (self.root / ".git").exists():
             self.git("init", "-q", "-b", "main")
+            (self.root / ".git" / "info").mkdir(parents=True, exist_ok=True)
+            (self.root / ".git" / "info" / "exclude").write_text("\n".join(DEFAULT_EXCLUDES) + "\n")
             self.git("commit", "-q", "--allow-empty", "-m", "chore: initialise workspace")
 
     def git(self, *args: str) -> str:
@@ -69,7 +84,7 @@ class Workspace:
             if status.startswith("D"):
                 deleted.append(path)
             else:
-                changed[path] = (self.root / path).read_text()
+                changed[path] = _text_or_empty(self.root / path)
         stat = self.git("diff", "--cached", "--numstat", ref).splitlines()
         lines = sum(int(a) + int(d) for a, d, p in (s.split("\t", 2) for s in stat)
                     if a.isdigit() and d.isdigit() and not p.startswith(exclude))

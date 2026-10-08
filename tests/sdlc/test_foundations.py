@@ -178,3 +178,14 @@ def test_git_is_resolved_to_an_absolute_path(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(RuntimeError, match="git is required"):
         workspace.git_executable()
     workspace.git_executable.cache_clear()
+
+
+def test_workspace_ignores_build_byproducts_and_tolerates_binary_changes(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    ws = Workspace(tmp_path / "w")
+    base = ws.snapshot()
+    (ws.root / "pkg" / "__pycache__").mkdir(parents=True)
+    (ws.root / "pkg" / "__pycache__" / "m.cpython-312.pyc").write_bytes(b"\xcb\x0d\x0d\x0a")
+    ws.write(".coverage", "x")
+    (ws.root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\xcb\xff")
+    changed, deleted, _ = ws.changes_since(base)
+    assert changed == {"logo.png": ""} and deleted == []          # byproducts excluded; binary listed, no crash

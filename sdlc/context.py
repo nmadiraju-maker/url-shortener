@@ -70,6 +70,17 @@ class ContextStore:
             raise KeyError(f"artifact '{name}' not available")
         return art.content
 
+    def require_dict(self, name: str) -> dict[str, Any]:
+        """Latest content of an artifact that must be a mapping (all stage outputs are JSON objects).
+
+        Raises TypeError for anything else, so a malformed upstream artifact fails the stage clearly
+        instead of crashing an agent half-way through.
+        """
+        content = self.require(name)
+        if not isinstance(content, dict):
+            raise TypeError(f"artifact '{name}' must be a mapping, got {type(content).__name__}")
+        return content
+
     def has(self, name: str) -> bool:
         return name in self._artifacts
 

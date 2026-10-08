@@ -35,3 +35,7 @@ packages = ["urlshort", "sdlc"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["urlshort", "sdlc"]   # explicit, so local and CI runs always agree on import grouping
+
+[tool.ruff.lint.per-file-ignores]
+"sdlc/agents/catalog.py" = ["E501"]   # prose data: user stories and acceptance criteria
+"sdlc/agents/design.py" = ["E501"]    # prose data: architecture decisions and threat model

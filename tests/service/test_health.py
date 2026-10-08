@@ -15,6 +15,7 @@ def test_healthz_reports_ok_and_version(client: TestClient) -> None:
 
 
 def test_readyz_reflects_database_reachability(client: TestClient, repo: SqliteRepository) -> None:
+    """AC-HEALTH-1"""
     assert client.get("/readyz").json() == {"status": "ready"}
     repo.close()
     resp = client.get("/readyz")
