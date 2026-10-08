@@ -474,3 +474,20 @@ def test_startup_logs_trusted_proxies(repo: SqliteRepository) -> None:
         logging.getLogger("urlshort.api").removeHandler(handler)
     assert any(json.loads(x).get("ctx", {}).get("trusted_proxies") == ["10.0.0.0/8"]
                for x in stream.getvalue().splitlines())
+
+
+def test_infrastructure_is_wired_only_when_configured(repo: SqliteRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With a database or Redis URL the adapters' wiring builds storage and limiters (tested against real
+    servers in tests/infra); here only the hand-off is checked."""
+    from urlshort.ratelimit import GcraLimiter
+    shared = (GcraLimiter(60, 1, clock=Mono()), GcraLimiter(60, 1, clock=Mono()))
+    seen: list[str] = []
+
+    def fake_build(settings: Settings, given: object) -> tuple[object, object]:
+        seen.append(settings.redis_url)
+        return repo, shared
+    monkeypatch.setattr("urlshort.adapters.wiring.build", fake_build)
+    client = TestClient(create_app(Settings(redis_url="redis://cache:6379/0"), None))
+    assert seen == ["redis://cache:6379/0"]
+    assert client.post("/api/v1/links", json={"url": "https://example.com/1"}).status_code == 201
+    assert client.post("/api/v1/links", json={"url": "https://example.com/2"}).status_code == 429  # shared limiter
