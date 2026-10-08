@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import hmac
 import logging
 from dataclasses import dataclass
 
 from starlette.requests import Request
 
+from ..auth import Principal, authenticate
 from ..config import Settings
-from ..errors import RateLimited
+from ..errors import RateLimited, Unauthorized
 from ..models import LinkResponse
 from ..ratelimit import RateLimiter
 from ..service import ShortenerService
@@ -31,11 +31,17 @@ class AppContext:
     def client_ip(self, request: Request) -> str | None:
         return request_client_ip(request, self.proxies)
 
-    def is_admin(self, x_api_key: str | None) -> bool:
-        # No configured key means admin access is disabled, never open.
-        # compare_digest takes the same time however close a guess is (no timing side channel).
-        key = self.settings.admin_api_key
-        return bool(key and x_api_key and hmac.compare_digest(x_api_key, key))
+    def principal(self, x_api_key: str | None, authorization: str | None) -> Principal | None:
+        """Who is calling: from `X-API-Key` or `Authorization: Bearer <key>`. A key that is PRESENTED but not
+        valid raises 401: it is never silently treated as anonymous (e.g. a revoked owner key)."""
+        presented = x_api_key or (authorization[7:].strip() if authorization and
+                                  authorization.lower().startswith("bearer ") else None)
+        if not presented:
+            return None
+        found = authenticate(self.repository, presented, bootstrap_admin_key=self.settings.admin_api_key)
+        if found is None:
+            raise Unauthorized("invalid or revoked API key")
+        return found
 
     def enforce(self, limiter: RateLimiter, request: Request, what: str) -> dict[str, str]:
         """Apply a rate limit to this request's client; returns RateLimit-* headers or raises 429."""

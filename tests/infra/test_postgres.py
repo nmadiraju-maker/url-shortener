@@ -152,4 +152,23 @@ def test_every_migration_is_reversible(pg_url: str) -> None:
     command.downgrade(cfg, "base")
     assert tables() == set()
     assert migrate(pg_url).startswith(f"v{SCHEMA_VERSION}_")
-    assert tables() == {"links", "clicks", "audit_log", "click_outbox"} and "max_clicks" in columns()
+    assert tables() == {"links", "clicks", "audit_log", "click_outbox", "api_keys"} and "max_clicks" in columns()
+
+
+def test_api_keys_on_postgres(pg: PostgresRepository) -> None:
+    from urlshort.auth import authenticate, create_key
+    with pg._pool.connection() as conn:
+        conn.execute("TRUNCATE api_keys")
+    key = create_key(pg, name="team-a ci", role="owner", owner="team-a", now=T0)
+    who = authenticate(pg, key)
+    assert who is not None and who.actor == "owner:team-a ci"
+    (stored,) = pg.list_api_keys()
+    assert stored.created_at == T0 and stored.revoked_at is None and pg.get_api_key("nope") is None
+    assert pg.revoke_api_key(stored.key_id, T0) is True and pg.revoke_api_key(stored.key_id, T0) is False
+    assert authenticate(pg, key) is None
+    client = TestClient(create_app(Settings(), pg))
+    owner_key = create_key(pg, name="team-b ci", role="owner", owner="team-b", now=T0)
+    made = client.post("/api/v1/links", json={"url": "https://example.com/k"},
+                       headers={"authorization": f"Bearer {owner_key}"}).json()
+    got = pg.get_link(made["code"])
+    assert got is not None and got.owner == "team-b"

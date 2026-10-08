@@ -75,6 +75,8 @@ class Settings:
     database_url: str = ""                  # postgresql://... (env only: may hold a password); empty = SQLite
     redis_url: str = ""                     # redis://... (env only); enables the cache, Bloom filter, shared limits
     cache_ttl_seconds: int = 60             # how long a cached link may be served (click_count may lag this much)
+    require_api_key: bool = False           # true: creating links needs an owner/admin key (no anonymous links)
+    audit_anchor_key: str = ""              # signs audit checkpoints (env or *_FILE only)
     analytics_mode: str = "sync"            # "events": clicks via transactional outbox + workers (docs/events.md)
     ip_hash_salt: str = "change-me"         # DEFAULT_IP_SALT; replace via URLSHORT_IP_SALT
     blocked_domains: frozenset[str] = field(default_factory=frozenset)
@@ -104,10 +106,11 @@ FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
                 "request_sample_rate": ("log_request_sample_rate", float)},
     "cache": {"ttl_seconds": ("cache_ttl_seconds", int)},
     "analytics": {"mode": ("analytics_mode", str)},
+    "auth": {"require_api_key": ("require_api_key", bool)},
     "http": {"trusted_proxies": ("trusted_proxies", list), "cors_allow_origins": ("cors_allow_origins", list),
              "expose_docs": ("expose_docs", bool), "hsts_max_age": ("hsts_max_age", int)},
 }
-SECRETS = frozenset({"admin_api_key", "ip_hash_salt", "database_url", "redis_url"})
+SECRETS = frozenset({"admin_api_key", "ip_hash_salt", "database_url", "redis_url", "audit_anchor_key"})
 ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_ENV": ("environment", str),
     "URLSHORT_DB_PATH": ("db_path", str),
@@ -115,6 +118,8 @@ ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_REDIS_URL": ("redis_url", str),
     "URLSHORT_CACHE_TTL": ("cache_ttl_seconds", int),
     "URLSHORT_ANALYTICS_MODE": ("analytics_mode", str),
+    "URLSHORT_REQUIRE_API_KEY": ("require_api_key", bool),
+    "URLSHORT_AUDIT_ANCHOR_KEY": ("audit_anchor_key", str),
     "URLSHORT_BASE_URL": ("base_url", str),
     "URLSHORT_CODE_LENGTH": ("code_length", int),
     "URLSHORT_MAX_URL_LENGTH": ("max_url_length", int),
@@ -192,7 +197,25 @@ def read_config_file(path: str | Path) -> dict[str, object]:
     return values
 
 
+def _with_secret_files(env: Mapping[str, str]) -> dict[str, str]:
+    """Secrets may come from files: URLSHORT_X_FILE=/run/secrets/x (Docker/Kubernetes secrets, or files
+    rendered by Vault Agent), so they never appear in the process environment or the image."""
+    merged = dict(env)
+    for var, (name, _) in ENV_SCHEMA.items():
+        path = env.get(var + "_FILE")
+        if name not in SECRETS or path is None:
+            continue
+        if var in env:
+            raise ConfigError(f"set {var} or {var}_FILE, not both")
+        try:
+            merged[var] = Path(path).read_text().strip()
+        except OSError as exc:
+            raise ConfigError(f"{var}_FILE: cannot read {path}: {exc.strerror}") from exc
+    return merged
+
+
 def read_env(env: Mapping[str, str]) -> dict[str, object]:
+    env = _with_secret_files(env)
     values: dict[str, object] = {}
     for var, (name, kind) in ENV_SCHEMA.items():
         if var not in env:
