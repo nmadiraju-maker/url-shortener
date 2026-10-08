@@ -66,6 +66,21 @@ def _totals(files: dict[str, Any]) -> dict[str, Any]:
     return t
 
 
+def coverage_summary(cov: dict[str, Any], omit: list[str], threshold: float) -> dict[str, Any]:
+    """Coverage for the report and gates. Files matching `omit` (measured by another job, e.g. infrastructure
+    adapters tested against real servers) are listed as excluded, never silently dropped."""
+    excluded = sorted(f for f in cov["files"] if any(fnmatch(f, pattern) for pattern in omit))
+    files = {f: d for f, d in cov["files"].items() if f not in excluded}
+    totals = _totals(files) if omit else cov["totals"]
+    per_file = {f: {"line_pct": round(d["summary"]["percent_covered"], 2), "missing_lines": d["missing_lines"],
+                    "missing_branches": d.get("missing_branches", [])} for f, d in files.items()}
+    return {"percent": round(totals["percent_covered"], 2), "covered_lines": totals["covered_lines"],
+            "num_statements": totals["num_statements"], "num_branches": totals.get("num_branches"),
+            "covered_branches": totals.get("covered_branches"), "per_file": per_file, "threshold": threshold,
+            "excluded": excluded, "omit_patterns": omit,
+            "below_threshold": [f for f, d in per_file.items() if d["line_pct"] < threshold]}
+
+
 class QAAgent(Agent):
     name = "qa"
 
@@ -89,29 +104,16 @@ class QAAgent(Agent):
             raise TransientError(f"test runner produced no results: {proc.stderr[-400:]}")
         junit = parse_junit(out_dir / "junit.xml")
         cov = json.loads((out_dir / "coverage.json").read_text())
-        # Files measured elsewhere (e.g. infrastructure adapters, tested against real servers in their own job)
-        # are listed in the report but excluded from the threshold and the totals.
-        omit = list(ctx.params.get("coverage_omit", []))
-        excluded = sorted(f for f in cov["files"] if any(fnmatch(f, pattern) for pattern in omit))
-        files = {f: d for f, d in cov["files"].items() if f not in excluded}
-        totals = _totals(files) if omit else cov["totals"]
-        per_file = {f: {"line_pct": round(d["summary"]["percent_covered"], 2),
-                        "missing_lines": d["missing_lines"],
-                        "missing_branches": d.get("missing_branches", [])} for f, d in files.items()}
+        coverage = coverage_summary(cov, list(ctx.params.get("coverage_omit", [])), threshold)
+        per_file = coverage["per_file"]
         mapping = ac_map(ctx.workspace.python_files())
         required = [ac["id"] for s in req["stories"] for ac in s["acceptance_criteria"]]
         traced = {ac: sorted(t for t, ids in mapping.items() if ac in ids) for ac in required}
         passing = {ac: [t for t in ts if junit["cases"].get(t)] for ac, ts in traced.items()}
         uncovered = [ac for ac, ts in passing.items() if not ts]
-        line_pct = round(totals["percent_covered"], 2)
+        line_pct = coverage["percent"]
         report: dict[str, Any] = {"tests": {k: junit[k] for k in ("total", "failures", "errors", "skipped", "failed")},
-                  "coverage": {"percent": line_pct, "covered_lines": totals["covered_lines"],
-                               "num_statements": totals["num_statements"],
-                               "num_branches": totals.get("num_branches"),
-                               "covered_branches": totals.get("covered_branches"), "per_file": per_file,
-                               "threshold": threshold, "excluded": excluded, "omit_patterns": omit,
-                               "below_threshold": [f for f, d in per_file.items()
-                                                                           if d["line_pct"] < threshold]},
+                  "coverage": coverage,
                   "functional": {"required_acs": len(required), "covered_acs": len(required) - len(uncovered),
                                  "percent": _pct(len(required) - len(uncovered), len(required)),
                                  "trace": passing, "uncovered": uncovered},

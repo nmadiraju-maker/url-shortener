@@ -35,7 +35,8 @@ A URL shortener service and a governed, agentic SDLC orchestrator that delivered
 
 - 469 tests; 100% line and branch coverage for both `urlshort` and `sdlc`; 32/32 acceptance criteria
   verified by passing tests; 0 findings from the review agent over every source file.
-- Postgres and Redis adapters tested against real servers (21 tests, 100% coverage, own CI job).
+- Postgres, Redis and event-pipeline adapters tested against real servers (29 tests, 100% coverage, own CI
+  job), including reclaiming a crashed consumer's messages and end-to-end delivery with duplicates and replay.
 - CI on every pull request: ruff, `mypy --strict`, bandit, pip-audit, tests on Python 3.11 and 3.12,
   Docker image + smoke test + production-mode checks, and four SDLC scenarios with audit-chain verification.
 - Concurrency-sensitive code checked under load: click caps (40 parallel redirects), rate limiter (50
@@ -48,7 +49,8 @@ A URL shortener service and a governed, agentic SDLC orchestrator that delivered
 | SQLite by default | Simple and transactional, one writer at a time; Postgres adapter available (`docs/infrastructure.md`) |
 | Redis rate limiter fails open | Service stays up during a Redis outage, without limiting until it recovers |
 | Cached links | `click_count` may lag by the cache TTL; caps are enforced in the database, not the cache |
-| Read-time analytics | Fine at current volume; rollups and streaming planned |
+| Read-time analytics | Fine at current volume; optional event pipeline (outbox + Redis Streams) decouples writes; rollups planned |
+| Events mode stats are eventually consistent | Counts and caps stay exact; per-click details appear once aggregated |
 | Deterministic agents | Reproducible and fully testable, but they apply prepared change plans rather than generate code |
 | Per-link stats tokens | Private by default, but a lost token cannot be recovered; owner API keys planned |
 | Static shortener and look-alike rules | No network calls on create; a reputation service would catch more |
