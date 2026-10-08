@@ -91,6 +91,9 @@ def qa_doc(cov: dict, junit: dict, trace: dict[str, list[str]], passing: dict[st
               "declarations whose `...` bodies never execute.",
               "- **Bandit low-severity B404/B603 in `sdlc/`** are accepted by design: the orchestrator must run git "
               "(argument lists, no shell, absolute executable path). The service has no findings at any severity.",
+              "- **Infrastructure adapters** (`urlshort/adapters/`) need real Postgres and Redis: CI measures them in "
+              "its own job (`make ci-infra` locally). They are included here only if the report was generated with "
+              "`URLSHORT_TEST_DATABASE_URL` and `URLSHORT_TEST_REDIS_URL` set.",
               "- **Docker-dependent checks** (container smoke test, production refusal) run only in CI, not in this "
               "report's local run.", "",
               "## How CI enforces this",

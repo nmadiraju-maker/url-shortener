@@ -29,7 +29,8 @@ SCENARIO = {
          "params": {"mode": "patch"}},
         {"id": "review", "agent": "review", "depends_on": ["development"], "exit_gates": ["no_high_findings"]},
         {"id": "qa", "agent": "qa", "depends_on": ["review"],
-         "exit_gates": ["tests_pass", "coverage_threshold_met", "acceptance_criteria_traced"]},
+         "exit_gates": ["tests_pass", "coverage_threshold_met", "acceptance_criteria_traced"],
+         "params": {"coverage_omit": ["urlshort/adapters/*"]}},           # measured by the infrastructure job
         {"id": "security", "agent": "security", "depends_on": ["review"], "exit_gates": ["no_blocking_findings"]},
         {"id": "docs", "agent": "docs", "fallback_agent": "docs_static", "depends_on": ["review"],
          "mutates_workspace": True, "exit_gates": ["api_documented"]},
@@ -69,6 +70,7 @@ def test_agents_did_real_work_on_this_codebase(finished: Orchestrator) -> None:
     assert qa["tests"]["failures"] == 0 and qa["tests"]["total"] > 250            # the real service suite
     assert qa["functional"]["trace"]["AC-HEADERS-1"]                              # traced to a passing test
     assert qa["coverage"]["percent"] == 100.0
+    assert qa["coverage"]["excluded"] and all(f.startswith("urlshort/adapters/") for f in qa["coverage"]["excluded"])
     docs = ctx.require_dict("docs")
     assert docs["source"] == "openapi" and "/api/v1/links/{code}/stats" in docs["paths"]
     review = ctx.require_dict("review_report")

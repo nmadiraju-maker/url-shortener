@@ -122,7 +122,10 @@
         "acceptance_criteria_traced"
       ],
       "params": {
-        "coverage_threshold": 100
+        "coverage_threshold": 100,
+        "coverage_omit": [
+          "urlshort/adapters/*"
+        ]
       }
     },
     {

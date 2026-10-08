@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,15 @@ def _pct(part: int, whole: int) -> float:
     return round(100 * part / whole, 1) if whole else 100.0
 
 
+def _totals(files: dict[str, Any]) -> dict[str, Any]:
+    """Recompute coverage totals over a subset of files (coverage.py's own percent formula)."""
+    keys = ("num_statements", "covered_lines", "num_branches", "covered_branches")
+    t = {k: sum(f["summary"].get(k, 0) for f in files.values()) for k in keys}
+    total = t["num_statements"] + t["num_branches"]
+    t["percent_covered"] = 100.0 * (t["covered_lines"] + t["covered_branches"]) / total if total else 100.0
+    return t
+
+
 class QAAgent(Agent):
     name = "qa"
 
@@ -79,10 +89,15 @@ class QAAgent(Agent):
             raise TransientError(f"test runner produced no results: {proc.stderr[-400:]}")
         junit = parse_junit(out_dir / "junit.xml")
         cov = json.loads((out_dir / "coverage.json").read_text())
-        totals = cov["totals"]
+        # Files measured elsewhere (e.g. infrastructure adapters, tested against real servers in their own job)
+        # are listed in the report but excluded from the threshold and the totals.
+        omit = list(ctx.params.get("coverage_omit", []))
+        excluded = sorted(f for f in cov["files"] if any(fnmatch(f, pattern) for pattern in omit))
+        files = {f: d for f, d in cov["files"].items() if f not in excluded}
+        totals = _totals(files) if omit else cov["totals"]
         per_file = {f: {"line_pct": round(d["summary"]["percent_covered"], 2),
                         "missing_lines": d["missing_lines"],
-                        "missing_branches": d.get("missing_branches", [])} for f, d in cov["files"].items()}
+                        "missing_branches": d.get("missing_branches", [])} for f, d in files.items()}
         mapping = ac_map(ctx.workspace.python_files())
         required = [ac["id"] for s in req["stories"] for ac in s["acceptance_criteria"]]
         traced = {ac: sorted(t for t, ids in mapping.items() if ac in ids) for ac in required}
@@ -94,7 +109,8 @@ class QAAgent(Agent):
                                "num_statements": totals["num_statements"],
                                "num_branches": totals.get("num_branches"),
                                "covered_branches": totals.get("covered_branches"), "per_file": per_file,
-                               "threshold": threshold, "below_threshold": [f for f, d in per_file.items()
+                               "threshold": threshold, "excluded": excluded, "omit_patterns": omit,
+                               "below_threshold": [f for f, d in per_file.items()
                                                                            if d["line_pct"] < threshold]},
                   "functional": {"required_acs": len(required), "covered_acs": len(required) - len(uncovered),
                                  "percent": _pct(len(required) - len(uncovered), len(required)),
@@ -126,7 +142,8 @@ def render(r: dict[str, Any]) -> str:
            f"{c['covered_branches']}/{c['num_branches']} branches); threshold {c['threshold']}%", "",
            "| File | Coverage | Missing lines |", "|---|---|---|"]
     out += [f"| `{p}` | {d['line_pct']}% | {d['missing_lines'] or '-'} |" for p, d in sorted(c["per_file"].items())]
-    out += ["", f"Below threshold: {', '.join(c['below_threshold']) or 'none'}", "",
+    out += ["", f"Below threshold: {', '.join(c['below_threshold']) or 'none'}",
+            f"Measured elsewhere (excluded): {', '.join(c.get('excluded', [])) or 'none'}", "",
             "## Functional coverage (acceptance criteria → passing tests)",
             f"- **{f['covered_acs']}/{f['required_acs']} ACs ({f['percent']}%)**", "",
             "| AC | Verified by |", "|---|---|"]

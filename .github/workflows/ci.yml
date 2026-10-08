@@ -93,7 +93,7 @@ jobs:
           --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov
           --junitxml=junit.xml
       - name: 100% line and branch coverage - service
-        run: coverage report --include="urlshort/*" --fail-under=100
+        run: coverage report --include="urlshort/*" --omit="urlshort/adapters/*" --fail-under=100   # adapters: infrastructure job
       - name: 100% line and branch coverage - orchestrator
         run: coverage report --include="sdlc/*" --fail-under=100
       - uses: actions/upload-artifact@v4
@@ -105,6 +105,40 @@ jobs:
             htmlcov/
             junit.xml
           retention-days: 14
+
+  infrastructure:
+    name: Infrastructure (Postgres + Redis adapters)
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck, security]
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: urlshort
+          POSTGRES_PASSWORD: urlshort
+          POSTGRES_DB: urlshort
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U urlshort" --health-interval 2s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 2s --health-retries 30
+    env:
+      URLSHORT_TEST_DATABASE_URL: postgresql://urlshort:urlshort@localhost:5432/urlshort
+      URLSHORT_TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Adapter tests against real Postgres and Redis
+        run: pytest tests/infra --cov=urlshort --cov-branch -o addopts="" -q
+      - name: 100% line and branch coverage - adapters
+        run: coverage report --include="urlshort/adapters/*" --fail-under=100
 
   integration:
     name: Integration (Docker image + smoke test)

@@ -45,7 +45,9 @@ open runs/brownfield/run-report.md
 | Operations | JSON logs with redaction, liveness/readiness probes, security headers, CORS, trusted proxies, production profile that refuses unsafe settings, non-root container |
 
 Configuration: `config/urlshort.example.toml` (every setting, documented) or `URLSHORT_*` environment
-variables. See `docs/api.md`, `docs/logging.md`, `docs/production.md`.
+variables. See `docs/api.md`, `docs/logging.md`, `docs/production.md`. Scale-out: PostgreSQL storage and a
+Redis cache, Bloom filter and shared rate limits (`docs/infrastructure.md`; `docker compose up -d`,
+`make ci-infra`).
 
 ## The orchestrator
 
@@ -82,7 +84,7 @@ Regenerate the generated documents with `python scripts/generate_sdlc_docs.py`.
 ## Honest limitations
 
 Agents run deterministically (prepared change plans; an LLM-backed requirements agent with fallback). No
-real model responses are recorded here. SQLite and in-process rate limiting suit a single instance;
-Postgres, Redis and streaming analytics are planned. Details: `docs/final-summary.md`.
+real model responses are recorded here. Streaming analytics, owner accounts and observability are
+planned. Details: `docs/final-summary.md`.
 
 Built with an AI assistant (Claude); see `docs/ai-usage.md`.

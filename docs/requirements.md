@@ -134,7 +134,7 @@ Every acceptance criterion (AC) is traced to the tests that verify it: tests nam
 
 | AC | Given | When | Then | Tests |
 |---|---|---|---|---|
-| AC-MAXCLICKS-1 | a link with max_clicks=N | the (N+1)th human redirect happens | 410 link_exhausted, even under concurrency | `test_cap_is_enforced_with_link_exhausted`, `test_cap_holds_under_concurrency` |
+| AC-MAXCLICKS-1 | a link with max_clicks=N | the (N+1)th human redirect happens | 410 link_exhausted, even under concurrency | `test_click_cap_is_exact_under_concurrency`, `test_cap_is_enforced_with_link_exhausted`, `test_cap_holds_under_concurrency` |
 | AC-MAXCLICKS-2 | max_clicks < 1 or > 1,000,000 | a link is created | 400 invalid_input | `test_out_of_range_caps_are_rejected`, `test_service_validates_caps_too` |
 | AC-MAXCLICKS-3 | bot traffic to a capped link | bots resolve it | bot clicks do not consume the limit | `test_bots_do_not_consume_the_cap` |
 
