@@ -110,7 +110,7 @@ def test_uncapped_links_still_fail_open(repo: SqliteRepository, clock: FakeClock
     assert svc.resolve(code) == "https://example.com/u"
 
 
-def test_version_2_database_is_upgraded_to_version_3(tmp_path: Path) -> None:
+def test_version_2_database_is_upgraded_to_the_current_version(tmp_path: Path) -> None:
     path = tmp_path / "v2.db"
     conn = sqlite3.connect(path)
     conn.executescript("""
@@ -124,5 +124,5 @@ def test_version_2_database_is_upgraded_to_version_3(tmp_path: Path) -> None:
     r = SqliteRepository(str(path))
     old = r.get_link("old0001")
     assert old is not None and old.click_count == 4 and old.max_clicks is None
-    assert r._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
+    assert r._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION >= 3   # current, whatever it is
     r.close()

@@ -50,3 +50,6 @@ hsts_max_age = 31536000              # Strict-Transport-Security, sent only when
 # Only used when URLSHORT_REDIS_URL is set. Database and Redis URLs are secrets: environment only
 # (URLSHORT_DATABASE_URL, URLSHORT_REDIS_URL). See docs/infrastructure.md.
 ttl_seconds = 60                     # how long a cached link may be served
+
+[analytics]
+mode = "sync"                        # "events": transactional outbox + workers (docs/events.md)
