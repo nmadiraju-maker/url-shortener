@@ -1,39 +1,88 @@
-# URL Shortener
+# URL shortener, delivered by a governed AI SDLC
 
-A URL shortener service with core APIs, analytics and reliability features, built incrementally.
-Every change goes through the CI quality gates below.
+Two things in one repository:
 
-**Status:** foundations — `/healthz`, domain errors, URL/alias/TTL validation, validated configuration, SQLite storage and a hash-chained audit trail.
+- **`urlshort/`**: a production-minded URL shortener (FastAPI, SQLite).
+- **`sdlc/`**: a governed, agentic SDLC orchestrator. Agents do the work; an engine with gates, policies,
+  human approvals and a tamper-evident audit log decides whether it passes. Three features of the service
+  (click caps, look-alike domain protection, clicks by hour) were delivered through it.
 
-## Setup
+![CI](https://github.com/nmadiraju-maker/url-shortener/actions/workflows/ci.yml/badge.svg)
+
+## Quick start
+
 ```bash
-python3.11 -m venv .venv && source .venv/bin/activate   # Python 3.11+
+python3 -m venv .venv && source .venv/bin/activate
 make install-dev
+make ci                                   # lint, types, security, 469 tests at 100% coverage
+URLSHORT_ADMIN_API_KEY=dev-key make run   # http://localhost:8000/docs
 ```
 
-## Run
 ```bash
-make run                     # http://localhost:8000/healthz, API docs at /docs
+curl -s -X POST localhost:8000/api/v1/links -H 'content-type: application/json' \
+  -d '{"url": "https://example.com/offer", "max_clicks": 100}'
+curl -i localhost:8000/<code>                                   # 307 to the target
+curl -s localhost:8000/api/v1/links/<code>/stats -H 'x-stats-token: <token from create>'
 ```
 
-## Configuration
-Settings come from built-in defaults, then an optional TOML file, then environment variables (highest wins):
+Run the orchestrator scenarios (needs the tags `v0.9.0` and `v0.10.0`):
+
 ```bash
-cp config/urlshort.example.toml config/urlshort.toml
-export URLSHORT_CONFIG=config/urlshort.toml
+make scenarios                            # greenfield, brownfield, ambiguous, ambiguous-llm
+python -m sdlc.cli verify runs/brownfield # audit hash chain
+open runs/brownfield/run-report.md
 ```
-Unknown keys, wrong types and out-of-range values stop the service at startup. Secrets
-(`URLSHORT_ADMIN_API_KEY`, `URLSHORT_IP_SALT`) are accepted only from the environment, never the file.
 
-## Quality gates
-`.github/workflows/ci.yml` runs on every push and pull request:
+## The service
 
-| Job | What it enforces |
+| Capability | Details |
 |---|---|
-| Lint | ruff (pyflakes, pycodestyle, import order, bugbear, pyupgrade) |
-| Type check | `mypy --strict` on the service package |
-| Security | bandit (no findings at any severity), pip-audit (no known vulnerable dependencies) |
-| Tests | Python 3.11 and 3.12, **100% line and branch coverage** |
-| Integration | Docker image builds, runs as non-root, passes a black-box smoke test |
+| Core API | Create (idempotent), 307 redirect, details, admin takedown; JSON error envelope with request IDs |
+| Links | Custom aliases, expiry, click caps enforced atomically (`max_clicks`) |
+| Analytics | Bots separated, no raw IPs (daily keyed visitor IDs), referrer domains, clicks by day and hour, stats protected by a per-link token |
+| Safety | SSRF protection, credentials and shortener chains rejected, look-alike (mixed-script) domains rejected |
+| Abuse | GCRA rate limits on creates and redirects, `RateLimit-*` and `Retry-After` headers |
+| Operations | JSON logs with redaction, liveness/readiness probes, security headers, CORS, trusted proxies, production profile that refuses unsafe settings, non-root container |
 
-Run the same gates locally with `make ci`.
+Configuration: `config/urlshort.example.toml` (every setting, documented) or `URLSHORT_*` environment
+variables. See `docs/api.md`, `docs/logging.md`, `docs/production.md`.
+
+## The orchestrator
+
+```bash
+python -m sdlc.cli run scenarios/brownfield.json --approvals scenarios/approvals/brownfield.json
+python -m sdlc.cli resume runs/<run> --interactive
+python -m sdlc.cli promote runs/<run> --approver "<name>"
+```
+
+How it works: `docs/orchestrator.md`. What each scenario demonstrates: `docs/scenarios.md`. Run reports
+from the runs that produced v0.10.0 and v0.11.0: `docs/evidence/scenarios/`.
+
+## Documents
+
+| Document | Contents |
+|---|---|
+| [`docs/requirements.md`](docs/requirements.md) | User stories, acceptance criteria, traceability to tests (generated) |
+| [`docs/design.md`](docs/design.md) | Architecture, data model, decisions, threat model, orchestration model |
+| [`docs/code-review-report.md`](docs/code-review-report.md) | Review process, every issue found and how it was resolved, automated review of all files |
+| [`docs/qa-report.md`](docs/qa-report.md) | Unit and functional coverage (generated) |
+| [`docs/ai-usage.md`](docs/ai-usage.md) | How AI was used and verified; decision and failure ledgers |
+| [`docs/final-summary.md`](docs/final-summary.md) | Plan, artifacts, validation, risks, assumptions, limitations |
+
+Regenerate the generated documents with `python scripts/generate_sdlc_docs.py`.
+
+## Versions
+
+| Tag | Produced by |
+|---|---|
+| `v0.9.0` | The service and orchestrator built commit by commit |
+| `v0.10.0` | The brownfield scenario: click caps |
+| `v0.11.0` | The ambiguous scenario: look-alike domains, clicks by hour |
+
+## Honest limitations
+
+Agents run deterministically (prepared change plans; an LLM-backed requirements agent with fallback). No
+real model responses are recorded here. SQLite and in-process rate limiting suit a single instance;
+Postgres, Redis and streaming analytics are planned. Details: `docs/final-summary.md`.
+
+Built with an AI assistant (Claude); see `docs/ai-usage.md`.
