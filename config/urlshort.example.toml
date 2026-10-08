@@ -53,3 +53,6 @@ ttl_seconds = 60                     # how long a cached link may be served
 
 [analytics]
 mode = "sync"                        # "events": transactional outbox + workers (docs/events.md)
+
+[auth]
+require_api_key = false              # true: creating links needs an owner/admin key (docs/security.md)
