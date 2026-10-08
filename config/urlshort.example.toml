@@ -56,3 +56,8 @@ mode = "sync"                        # "events": transactional outbox + workers 
 
 [auth]
 require_api_key = false              # true: creating links needs an owner/admin key (docs/security.md)
+
+[observability]
+metrics_enabled = true               # GET /metrics; production requires URLSHORT_METRICS_TOKEN (env or _FILE)
+otel_endpoint = ""                   # e.g. "http://jaeger:4318/v1/traces"; empty = no trace export
+otel_service_name = "urlshort"

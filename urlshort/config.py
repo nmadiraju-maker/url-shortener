@@ -77,6 +77,10 @@ class Settings:
     cache_ttl_seconds: int = 60             # how long a cached link may be served (click_count may lag this much)
     require_api_key: bool = False           # true: creating links needs an owner/admin key (no anonymous links)
     audit_anchor_key: str = ""              # signs audit checkpoints (env or *_FILE only)
+    metrics_enabled: bool = True            # GET /metrics (Prometheus)
+    metrics_token: str = ""                 # bearer token for /metrics (env or *_FILE only); required in production
+    otel_endpoint: str = ""                 # OTLP/HTTP traces endpoint, e.g. http://jaeger:4318/v1/traces
+    otel_service_name: str = "urlshort"
     analytics_mode: str = "sync"            # "events": clicks via transactional outbox + workers (docs/events.md)
     ip_hash_salt: str = "change-me"         # DEFAULT_IP_SALT; replace via URLSHORT_IP_SALT
     blocked_domains: frozenset[str] = field(default_factory=frozenset)
@@ -107,10 +111,12 @@ FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
     "cache": {"ttl_seconds": ("cache_ttl_seconds", int)},
     "analytics": {"mode": ("analytics_mode", str)},
     "auth": {"require_api_key": ("require_api_key", bool)},
+    "observability": {"metrics_enabled": ("metrics_enabled", bool), "otel_endpoint": ("otel_endpoint", str),
+                      "otel_service_name": ("otel_service_name", str)},
     "http": {"trusted_proxies": ("trusted_proxies", list), "cors_allow_origins": ("cors_allow_origins", list),
              "expose_docs": ("expose_docs", bool), "hsts_max_age": ("hsts_max_age", int)},
 }
-SECRETS = frozenset({"admin_api_key", "ip_hash_salt", "database_url", "redis_url", "audit_anchor_key"})
+SECRETS = frozenset({"admin_api_key", "ip_hash_salt", "database_url", "redis_url", "audit_anchor_key", "metrics_token"})
 ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_ENV": ("environment", str),
     "URLSHORT_DB_PATH": ("db_path", str),
@@ -119,6 +125,10 @@ ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_CACHE_TTL": ("cache_ttl_seconds", int),
     "URLSHORT_ANALYTICS_MODE": ("analytics_mode", str),
     "URLSHORT_REQUIRE_API_KEY": ("require_api_key", bool),
+    "URLSHORT_METRICS_ENABLED": ("metrics_enabled", bool),
+    "URLSHORT_METRICS_TOKEN": ("metrics_token", str),
+    "URLSHORT_OTEL_ENDPOINT": ("otel_endpoint", str),
+    "URLSHORT_OTEL_SERVICE_NAME": ("otel_service_name", str),
     "URLSHORT_AUDIT_ANCHOR_KEY": ("audit_anchor_key", str),
     "URLSHORT_BASE_URL": ("base_url", str),
     "URLSHORT_CODE_LENGTH": ("code_length", int),
@@ -305,6 +315,8 @@ def production_problems(settings: Settings) -> list[str]:
         problems.append("expose_docs must be false")
     if "*" in s.cors_allow_origins:
         problems.append("cors_allow_origins must list exact origins, not '*'")
+    if s.metrics_enabled and not s.metrics_token:
+        problems.append("URLSHORT_METRICS_TOKEN must be set while /metrics is enabled (or disable metrics)")
     if s.log_level == "DEBUG":
         problems.append("log level must not be DEBUG")
     if s.hsts_max_age < 86_400:

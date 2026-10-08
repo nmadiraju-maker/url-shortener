@@ -9,7 +9,7 @@ from urlshort.config import ConfigError, Settings, ensure_safe_for_environment, 
 from urlshort.storage import SqliteRepository
 
 SAFE = Settings(environment="production", base_url="https://sho.rt", db_path="/data/urlshort.db",
-                admin_api_key="a" * 24, ip_hash_salt="s" * 16, expose_docs=False)
+                admin_api_key="a" * 24, ip_hash_salt="s" * 16, expose_docs=False, metrics_token="m" * 24)
 
 
 def test_safe_production_settings_have_no_problems() -> None:
@@ -29,6 +29,7 @@ def test_safe_production_settings_have_no_problems() -> None:
     ({"log_level": "DEBUG"}, "DEBUG"),
     ({"hsts_max_age": 0}, "hsts_max_age"),
     ({"hsts_max_age": 86_399}, "hsts_max_age"),
+    ({"metrics_token": ""}, "URLSHORT_METRICS_TOKEN"),
 ])
 def test_each_unsafe_setting_is_reported(change: dict[str, object], fragment: str) -> None:
     problems = production_problems(replace(SAFE, **change))  # type: ignore[arg-type]
@@ -40,7 +41,7 @@ def test_every_problem_is_reported_at_once() -> None:
         ensure_safe_for_environment(Settings(environment="production"))
     message = str(err.value)
     assert message.startswith("refusing to start in production:")
-    assert message.count("\n  - ") == 5          # salt, admin key, https, in-memory db, docs
+    assert message.count("\n  - ") == 6          # salt, admin key, https, in-memory db, docs, metrics token
 
 
 def test_development_is_not_checked() -> None:
@@ -53,7 +54,7 @@ def test_loading_from_environment_enforces_the_profile() -> None:
         load_settings(None, {"URLSHORT_ENV": "Production"})
     ok = load_settings(None, {"URLSHORT_ENV": "production", "URLSHORT_BASE_URL": "https://sho.rt",
                               "URLSHORT_ADMIN_API_KEY": "a" * 24, "URLSHORT_IP_SALT": "s" * 16,
-                              "URLSHORT_EXPOSE_DOCS": "false"})
+                              "URLSHORT_EXPOSE_DOCS": "false", "URLSHORT_METRICS_TOKEN": "m" * 24})
     assert ok.environment == "production"
 
 

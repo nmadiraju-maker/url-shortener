@@ -18,6 +18,7 @@ field() { python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]
 
 check "livez" "$(status "$BASE/livez")" 200
 check "healthz alias" "$(status "$BASE/healthz")" 200
+check "metrics exposed" "$(curl -s "$BASE/metrics" | grep -c '^# TYPE urlshort_http_requests_total counter')" 1
 check "nosniff header" "$(curl -s -D - -o /dev/null "$BASE/livez" | grep -ci '^x-content-type-options: nosniff')" 1
 check "readyz" "$(status "$BASE/readyz")" 200
 
