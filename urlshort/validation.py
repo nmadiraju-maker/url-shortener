@@ -80,3 +80,15 @@ def validate_ttl(ttl_seconds: int | None, *, max_ttl: int) -> int | None:
     if ttl_seconds <= 0 or ttl_seconds > max_ttl:
         raise InvalidInput(f"ttl_seconds must be between 1 and {max_ttl}")
     return ttl_seconds
+
+
+MAX_CLICKS_LIMIT = 1_000_000
+
+
+def validate_max_clicks(max_clicks: int | None) -> int | None:
+    """None means unlimited; otherwise between 1 and MAX_CLICKS_LIMIT human clicks."""
+    if max_clicks is None:
+        return None
+    if max_clicks < 1 or max_clicks > MAX_CLICKS_LIMIT:
+        raise InvalidInput(f"max_clicks must be between 1 and {MAX_CLICKS_LIMIT}")
+    return max_clicks

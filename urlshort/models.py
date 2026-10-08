@@ -19,6 +19,7 @@ class CreateLinkRequest(BaseModel):
     url: str = Field(..., examples=["https://example.com/some/long/path?x=1"])  # length limit is configurable
     custom_alias: str | None = Field(None, min_length=3, max_length=32, examples=["spring-sale"])
     ttl_seconds: int | None = Field(None, ge=1, examples=[86400])
+    max_clicks: int | None = Field(None, ge=1, le=1_000_000, examples=[100])
 
 
 class LinkResponse(BaseModel):
@@ -29,6 +30,7 @@ class LinkResponse(BaseModel):
     expires_at: datetime | None
     is_active: bool
     click_count: int
+    max_clicks: int | None = None
 
 
 class CreateLinkResponse(LinkResponse):

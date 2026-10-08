@@ -46,3 +46,11 @@ class RateLimited(DomainError):
 
 class CodeSpaceExhausted(DomainError):
     code, status = "code_generation_failed", 503
+
+
+class LinkExhausted(DomainError):
+    code, status = "link_exhausted", 410
+
+
+class StorageUnavailable(DomainError):
+    code, status = "storage_unavailable", 503
