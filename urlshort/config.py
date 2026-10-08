@@ -26,11 +26,21 @@ from .validation import KNOWN_SHORTENERS
 
 
 class ConfigError(ValueError):
-    """Invalid configuration; raised at startup."""
+    """Invalid configuration; raised at startup. `problems` lists each issue when there are several."""
+
+    def __init__(self, message: str, problems: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.problems = problems or [message]
+
+
+ENVIRONMENTS = ("development", "production")
+MIN_ADMIN_KEY_LENGTH = 24
+MIN_IP_SALT_LENGTH = 16
 
 
 @dataclass(frozen=True)
 class Settings:
+    environment: str = "development"        # "production" turns on the startup safety checks below
     db_path: str = ":memory:"
     base_url: str = "http://localhost:8000"
     code_length: int = 7
@@ -77,7 +87,8 @@ DEFAULT_IP_SALT = "change-me"
 
 # section -> key -> (Settings field, expected type)
 FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
-    "service": {"base_url": ("base_url", str), "db_path": ("db_path", str), "code_length": ("code_length", int),
+    "service": {"environment": ("environment", str),
+                "base_url": ("base_url", str), "db_path": ("db_path", str), "code_length": ("code_length", int),
                 "max_url_length": ("max_url_length", int), "max_ttl_seconds": ("max_ttl_seconds", int)},
     "ratelimit": {"create_rate_per_minute": ("create_rate_per_minute", int),
                   "create_burst": ("create_burst", int),
@@ -92,6 +103,7 @@ FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
 }
 SECRETS = frozenset({"admin_api_key", "ip_hash_salt"})
 ENV_SCHEMA: dict[str, tuple[str, type]] = {
+    "URLSHORT_ENV": ("environment", str),
     "URLSHORT_DB_PATH": ("db_path", str),
     "URLSHORT_BASE_URL": ("base_url", str),
     "URLSHORT_CODE_LENGTH": ("code_length", int),
@@ -209,6 +221,11 @@ def _check(values: dict[str, object]) -> None:
     if isinstance(keys, frozenset):
         values["log_redact_keys"] = keys | DEFAULT_REDACT_KEYS   # configured keys add to the defaults, never replace
     _check_http(values)
+    environment = values.get("environment")
+    if isinstance(environment, str):
+        values["environment"] = environment.strip().lower()
+        if values["environment"] not in ENVIRONMENTS:
+            raise ConfigError(f"environment must be one of {list(ENVIRONMENTS)}, got {environment!r}")
     base_url = values.get("base_url")
     if isinstance(base_url, str):
         parts = urlsplit(base_url)
@@ -236,6 +253,37 @@ def _check_http(values: dict[str, object]) -> None:
         values["cors_allow_origins"] = frozenset(o.rstrip("/") for o in origins)
 
 
+def production_problems(settings: Settings) -> list[str]:
+    """Everything unsafe about running these settings in production (empty list = OK)."""
+    s, problems = settings, []
+    if s.ip_hash_salt == DEFAULT_IP_SALT or len(s.ip_hash_salt) < MIN_IP_SALT_LENGTH:
+        problems.append(f"URLSHORT_IP_SALT must be set to a secret of at least {MIN_IP_SALT_LENGTH} characters")
+    if len(s.admin_api_key) < MIN_ADMIN_KEY_LENGTH:
+        problems.append(f"URLSHORT_ADMIN_API_KEY must be set (at least {MIN_ADMIN_KEY_LENGTH} characters); "
+                        "without it abusive links cannot be taken down")
+    if not s.base_url.startswith("https://"):
+        problems.append("base_url must use https")
+    if s.db_path == ":memory:":
+        problems.append("db_path must be a file: an in-memory database loses every link on restart")
+    if s.expose_docs:
+        problems.append("expose_docs must be false")
+    if "*" in s.cors_allow_origins:
+        problems.append("cors_allow_origins must list exact origins, not '*'")
+    if s.log_level == "DEBUG":
+        problems.append("log level must not be DEBUG")
+    if s.hsts_max_age < 86_400:
+        problems.append("hsts_max_age must be at least 86400 (one day)")
+    return problems
+
+
+def ensure_safe_for_environment(settings: Settings) -> None:
+    """Refuse to start an unsafe production configuration, reporting every problem at once."""
+    if settings.environment == "production":
+        problems = production_problems(settings)
+        if problems:
+            raise ConfigError("refusing to start in production:\n  - " + "\n  - ".join(problems), problems)
+
+
 def load_settings(path: str | Path | None = None, env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     values: dict[str, object] = {"db_path": "urlshort.db"}  # a running service persists by default
@@ -245,4 +293,6 @@ def load_settings(path: str | Path | None = None, env: Mapping[str, str] | None 
     _check(values)
     known = {f.name for f in fields(Settings)}
     # Every value was type-checked against FILE_SCHEMA / ENV_SCHEMA above, so the cast is safe.
-    return Settings(**cast(dict[str, Any], {k: v for k, v in values.items() if k in known}))
+    settings = Settings(**cast(dict[str, Any], {k: v for k, v in values.items() if k in known}))
+    ensure_safe_for_environment(settings)
+    return settings

@@ -5,7 +5,7 @@ install:
 install-dev:
 	pip install -r requirements-dev.txt
 run:
-	uvicorn urlshort.api:create_app --factory --reload --port 8000 --no-access-log --log-config config/uvicorn-logging.json
+	uvicorn urlshort.main:app_factory --factory --reload --port 8000 --no-access-log --log-config config/uvicorn-logging.json
 test:
 	pytest
 lint:
