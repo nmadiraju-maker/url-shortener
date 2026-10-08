@@ -25,7 +25,8 @@ flowchart LR
 ```
 
 Hexagonal layout: HTTP adapters → framework-free service → repository port. Business rules are tested
-without HTTP; storage can be replaced (Postgres is the planned adapter) without touching the service.
+without HTTP; storage is replaceable without touching the service: SQLite by default, **PostgreSQL** and a
+**Redis** cache, Bloom filter and shared rate limits when configured (`docs/infrastructure.md`).
 
 ### Redirect path (the hot path)
 
@@ -157,6 +158,6 @@ hash-chained audit log; metrics include success rate, retry and rollback frequen
 
 ## 3. Limitations and roadmap
 
-See `docs/final-summary.md`. Planned work (in order): Postgres + Redis (cache, Bloom filter, distributed
-rate limiting); Kafka-based analytics with an outbox and rollups; owner API keys and a secrets vault;
-metrics, tracing and load-test evidence.
+See `docs/final-summary.md`. Done: Postgres + Redis (cache, Bloom filter, distributed rate limiting). Planned
+(in order): Kafka-based analytics with an outbox and rollups; owner API keys and a secrets vault; metrics,
+tracing and load-test evidence.
