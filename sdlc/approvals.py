@@ -59,13 +59,15 @@ class DecisionFileApprovals(ApprovalGateway):
 
 
 class InteractiveApprovals(ApprovalGateway):
-    def __init__(self, ask: Callable[[str], str] = input, approver: str = "terminal-user") -> None:
+    def __init__(self, ask: Callable[[str], str] = input, approver: str = "terminal-user",
+                 say: Callable[[str], None] = print) -> None:
         self._ask = ask
+        self._say = say
         self._approver = approver
 
     def decide(self, request: ApprovalRequest) -> ApprovalDecision:
-        print(f"\n=== APPROVAL REQUIRED: {request.checkpoint} ===\nReason: {request.reason}")
-        print(json.dumps(request.summary, indent=2, default=str)[:3000])
+        self._say(f"\n=== APPROVAL REQUIRED: {request.checkpoint} ===\nReason: {request.reason}")
+        self._say(json.dumps(request.summary, indent=2, default=str)[:3000])
         answer = self._ask("Approve? [y]es / [n]o / [p]ause: ").strip().lower()
         if answer.startswith("y"):
             return ApprovalDecision(APPROVED, self._approver, "approved interactively")

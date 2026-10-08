@@ -189,3 +189,9 @@ def test_workspace_ignores_build_byproducts_and_tolerates_binary_changes(tmp_pat
     (ws.root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\xcb\xff")
     changed, deleted, _ = ws.changes_since(base)
     assert changed == {"logo.png": ""} and deleted == []          # byproducts excluded; binary listed, no crash
+
+
+def test_interactive_approval_output_is_injectable() -> None:
+    shown: list[str] = []
+    d = InteractiveApprovals(ask=lambda _: "y", approver="me", say=shown.append).decide(REQ)
+    assert d.status == APPROVED and "APPROVAL REQUIRED: design#1" in shown[0]
