@@ -2,3 +2,8 @@
 fastapi>=0.110
 pydantic>=2.7
 uvicorn>=0.29
+# Optional infrastructure (used only when URLSHORT_DATABASE_URL / URLSHORT_REDIS_URL are set)
+psycopg[binary]>=3.2
+psycopg-pool>=3.2
+alembic>=1.16
+redis>=6.0

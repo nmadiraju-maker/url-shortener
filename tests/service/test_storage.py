@@ -168,3 +168,9 @@ def test_stats_token_hash_round_trip(repo: SqliteRepository) -> None:
                           expires_at=None, is_active=True, click_count=0, stats_token_hash="ab" * 32))
     stored = repo.get_link("tok0001")
     assert stored is not None and stored.stats_token_hash == "ab" * 32
+
+
+def test_all_codes(repo: SqliteRepository) -> None:
+    repo.insert_link(Link(code="aaa0001", target_url="https://example.com/a", owner="o", created_at=T0,
+                          expires_at=None, is_active=True, click_count=0))
+    assert repo.all_codes() == ["aaa0001"]
