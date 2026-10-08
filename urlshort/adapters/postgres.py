@@ -11,6 +11,7 @@ Schema changes are Alembic revisions (urlshort/adapters/migrations), applied on 
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from ..errors import AliasConflict
+from ..events import encode_click
 from ..storage import AuditRecord, ChainFn, Click, Link
 
 AUDIT_LOCK_KEY = 0x75726C73   # advisory lock id for audit appends ("urls")
@@ -99,19 +101,25 @@ class PostgresRepository:
 
     # ---------------------------------------------------------------- clicks
     @staticmethod
-    def _insert_click(conn: psycopg.Connection[dict[str, Any]], click: Click) -> None:
+    def _store_click(conn: psycopg.Connection[dict[str, Any]], click: Click, as_event: bool) -> None:
+        """In events mode the click goes to the outbox in the SAME transaction as the counter update."""
+        if as_event:
+            conn.execute("INSERT INTO click_outbox(event_id, payload, created_at) VALUES (%s, %s, %s)",
+                         (click.event_id, encode_click(click), click.ts))
+            return
         conn.execute(
-            "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (click.code, click.ts, click.referrer_host, click.agent_family, click.is_bot, click.ip_id, click.ip_key_id))
+            "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id, event_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (click.code, click.ts, click.referrer_host, click.agent_family, click.is_bot, click.ip_id,
+             click.ip_key_id, click.event_id))
 
-    def record_click(self, click: Click) -> None:
+    def record_click(self, click: Click, *, as_event: bool = False) -> None:
         with self._pool.connection() as conn, conn.transaction():
-            self._insert_click(conn, click)
+            self._store_click(conn, click, as_event)
             if not click.is_bot:
                 conn.execute("UPDATE links SET click_count = click_count + 1 WHERE code = %s", (click.code,))
 
-    def record_click_with_limit(self, click: Click) -> bool:
+    def record_click_with_limit(self, click: Click, *, as_event: bool = False) -> bool:
         with self._pool.connection() as conn, conn.transaction():
             if click.is_bot:
                 allowed = conn.execute(
@@ -123,14 +131,40 @@ class PostgresRepository:
                     " WHERE code = %s AND (max_clicks IS NULL OR click_count < max_clicks)",
                     (click.code,)).rowcount == 1
             if allowed:
-                self._insert_click(conn, click)
+                self._store_click(conn, click, as_event)
             return allowed
+
+    # ---------------------------------------------------------------- outbox (events mode)
+    def outbox_pending(self, limit: int) -> list[tuple[int, str]]:
+        with self._pool.connection() as conn:
+            rows = conn.execute("SELECT id, payload FROM click_outbox WHERE published_at IS NULL ORDER BY id"
+                                " LIMIT %s", (limit,)).fetchall()
+        return [(r["id"], r["payload"]) for r in rows]
+
+    def mark_published(self, ids: list[int], at: datetime) -> None:
+        with self._pool.connection() as conn:
+            conn.execute("UPDATE click_outbox SET published_at = %s WHERE id = ANY(%s)", (at, ids))
+
+    def outbox_backlog(self) -> int:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT COUNT(*) AS n FROM click_outbox WHERE published_at IS NULL").fetchone()
+        return int(row["n"]) if row else 0
+
+    def apply_click_event(self, click: Click) -> bool:
+        with self._pool.connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id, event_id)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (event_id) DO NOTHING",
+                (click.code, click.ts, click.referrer_host, click.agent_family, click.is_bot, click.ip_id,
+                 click.ip_key_id, click.event_id))
+        return cur.rowcount == 1
 
     def clicks_for(self, code: str) -> list[Click]:
         with self._pool.connection() as conn:
             rows = conn.execute("SELECT * FROM clicks WHERE code = %s ORDER BY ts, id", (code,)).fetchall()
         return [Click(code=r["code"], ts=r["ts"], referrer_host=r["referrer_host"], agent_family=r["agent_family"],
-                      is_bot=r["is_bot"], ip_id=r["ip_id"], ip_key_id=r["ip_key_id"]) for r in rows]
+                      is_bot=r["is_bot"], ip_id=r["ip_id"], ip_key_id=r["ip_key_id"], event_id=r["event_id"])
+                for r in rows]
 
     # ---------------------------------------------------------------- audit
     def append_audit(self, ts: str, actor: str, action: str, target: str, details: str, chain: ChainFn) -> str:
