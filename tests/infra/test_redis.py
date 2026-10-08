@@ -126,6 +126,11 @@ def test_pass_through_methods_reach_the_database(redis_client: Redis) -> None:
     assert len(pending) == 1 and cache.outbox_backlog() == 1
     cache.mark_published([pending[0][0]], T0)
     assert cache.outbox_backlog() == 0 and cache.apply_click_event(e) is True and cache.apply_click_event(e) is False
+    from urlshort.auth import create_key
+    key = create_key(cache, name="n", role="admin", owner=None, now=T0)
+    key_id = key.split("_")[1]
+    assert cache.get_api_key(key_id) is not None and len(cache.list_api_keys()) == 1
+    assert cache.revoke_api_key(key_id, T0) is True
 
 
 # ---------------------------------------------------------------- wiring and multi-instance behaviour

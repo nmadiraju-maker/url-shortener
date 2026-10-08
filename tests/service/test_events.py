@@ -149,7 +149,7 @@ def test_version_3_database_gains_the_outbox(tmp_path: Path) -> None:
     """)
     conn.close()
     r = SqliteRepository(str(path))
-    assert r._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
+    assert r._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION >= 4   # current, whatever it is
     assert [c.event_id for c in r.clicks_for("old")] == [None] and r.outbox_backlog() == 0
     r.close()
 

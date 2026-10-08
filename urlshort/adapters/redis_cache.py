@@ -24,7 +24,7 @@ from typing import Any
 from redis import Redis
 from redis.exceptions import RedisError
 
-from ..storage import AuditRecord, ChainFn, Click, Link, Repository
+from ..storage import ApiKey, AuditRecord, ChainFn, Click, Link, Repository
 
 log = logging.getLogger("urlshort.cache")
 NEGATIVE = b"-"
@@ -131,6 +131,18 @@ class CachedRepository:
 
     def all_codes(self) -> list[str]:
         return self._repo.all_codes()
+
+    def insert_api_key(self, key: ApiKey) -> None:
+        self._repo.insert_api_key(key)
+
+    def get_api_key(self, key_id: str) -> ApiKey | None:
+        return self._repo.get_api_key(key_id)
+
+    def list_api_keys(self) -> list[ApiKey]:
+        return self._repo.list_api_keys()
+
+    def revoke_api_key(self, key_id: str, at: datetime) -> bool:
+        return self._repo.revoke_api_key(key_id, at)
 
     # ---------------------------------------------------------------- pass-through
     def record_click(self, click: Click, *, as_event: bool = False) -> None:

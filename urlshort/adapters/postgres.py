@@ -21,7 +21,7 @@ from psycopg_pool import ConnectionPool
 
 from ..errors import AliasConflict
 from ..events import encode_click
-from ..storage import AuditRecord, ChainFn, Click, Link
+from ..storage import ApiKey, AuditRecord, ChainFn, Click, Link
 
 AUDIT_LOCK_KEY = 0x75726C73   # advisory lock id for audit appends ("urls")
 MIGRATIONS = Path(__file__).with_name("migrations")
@@ -98,6 +98,34 @@ class PostgresRepository:
     def all_codes(self) -> list[str]:
         with self._pool.connection() as conn:
             return [r["code"] for r in conn.execute("SELECT code FROM links").fetchall()]
+
+    # ---------------------------------------------------------------- API keys
+    @staticmethod
+    def _to_key(r: dict[str, Any]) -> ApiKey:
+        return ApiKey(key_id=r["key_id"], name=r["name"], owner=r["owner"], role=r["role"],
+                      secret_hash=r["secret_hash"], created_at=r["created_at"], revoked_at=r["revoked_at"])
+
+    def insert_api_key(self, key: ApiKey) -> None:
+        with self._pool.connection() as conn:
+            conn.execute("INSERT INTO api_keys(key_id, name, owner, role, secret_hash, created_at)"
+                         " VALUES (%s, %s, %s, %s, %s, %s)",
+                         (key.key_id, key.name, key.owner, key.role, key.secret_hash, key.created_at))
+
+    def get_api_key(self, key_id: str) -> ApiKey | None:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT * FROM api_keys WHERE key_id = %s", (key_id,)).fetchone()
+        return self._to_key(row) if row else None
+
+    def list_api_keys(self) -> list[ApiKey]:
+        with self._pool.connection() as conn:
+            rows = conn.execute("SELECT * FROM api_keys ORDER BY created_at, key_id").fetchall()
+        return [self._to_key(r) for r in rows]
+
+    def revoke_api_key(self, key_id: str, at: datetime) -> bool:
+        with self._pool.connection() as conn:
+            cur = conn.execute("UPDATE api_keys SET revoked_at = %s WHERE key_id = %s AND revoked_at IS NULL",
+                               (at, key_id))
+        return cur.rowcount == 1
 
     # ---------------------------------------------------------------- clicks
     @staticmethod

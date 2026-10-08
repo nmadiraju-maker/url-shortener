@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS clicks (
     event_id      TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_clicks_code_ts ON clicks(code, ts);
+CREATE TABLE IF NOT EXISTS api_keys (
+    key_id      TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    owner       TEXT,
+    role        TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    revoked_at  TEXT
+);
 CREATE TABLE IF NOT EXISTS click_outbox (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id     TEXT NOT NULL UNIQUE,
@@ -65,7 +74,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     hash      TEXT NOT NULL
 );
 """
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # version -> steps added in that version: (table, column, complete DDL). Expand-only and nullable.
 # Every statement is a literal; nothing is built from strings at runtime.
 MIGRATIONS: dict[int, tuple[tuple[str, str, str], ...]] = {
@@ -74,10 +83,11 @@ MIGRATIONS: dict[int, tuple[tuple[str, str, str], ...]] = {
         ("clicks", "ip_key_id", "ALTER TABLE clicks ADD COLUMN ip_key_id TEXT")),
     3: (("links", "max_clicks", "ALTER TABLE links ADD COLUMN max_clicks INTEGER"),),
     4: (("clicks", "event_id", "ALTER TABLE clicks ADD COLUMN event_id TEXT"),),
+    5: (),   # api_keys: a new table, created by SCHEMA (CREATE TABLE IF NOT EXISTS) for old and new databases
 }
 # Idempotent DDL that needs the migrated columns, run after every migration check.
 POST_MIGRATION = ("CREATE UNIQUE INDEX IF NOT EXISTS ux_clicks_event_id ON clicks(event_id)",)
-SET_SCHEMA_VERSION = "PRAGMA user_version = 4"
+SET_SCHEMA_VERSION = "PRAGMA user_version = 5"
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,17 @@ class Click:
 
 
 @dataclass(frozen=True)
+class ApiKey:
+    key_id: str                # public lookup id (part of the key)
+    name: str                  # who holds it, e.g. "alice" or "team-a ci"; recorded as the audit actor
+    owner: str | None          # links created with an owner key belong to this owner; None for admins
+    role: str                  # "owner" or "admin"
+    secret_hash: str           # sha256 of the secret part; the secret itself is never stored
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class AuditRecord:
     id: int
     ts: str
@@ -127,6 +148,10 @@ class Repository(Protocol):
     def find_reusable_link(self, owner: str, target_url: str) -> Link | None: ...
     def deactivate(self, code: str) -> bool: ...
     def all_codes(self) -> list[str]: ...
+    def insert_api_key(self, key: ApiKey) -> None: ...
+    def get_api_key(self, key_id: str) -> ApiKey | None: ...
+    def list_api_keys(self) -> list[ApiKey]: ...
+    def revoke_api_key(self, key_id: str, at: datetime) -> bool: ...
     def record_click(self, click: Click, *, as_event: bool = False) -> None: ...
     def record_click_with_limit(self, click: Click, *, as_event: bool = False) -> bool: ...
     def outbox_pending(self, limit: int) -> list[tuple[int, str]]: ...
@@ -229,6 +254,35 @@ class SqliteRepository:
     def all_codes(self) -> list[str]:
         with self._lock:
             return [r["code"] for r in self._conn.execute("SELECT code FROM links").fetchall()]
+
+    # ---------------------------------------------------------------- API keys
+    @staticmethod
+    def _to_key(r: sqlite3.Row) -> ApiKey:
+        return ApiKey(key_id=r["key_id"], name=r["name"], owner=r["owner"], role=r["role"],
+                      secret_hash=r["secret_hash"], created_at=_dt(r["created_at"]),
+                      revoked_at=_dt(r["revoked_at"]) if r["revoked_at"] else None)
+
+    def insert_api_key(self, key: ApiKey) -> None:
+        with self._lock:
+            self._conn.execute("INSERT INTO api_keys(key_id, name, owner, role, secret_hash, created_at)"
+                               " VALUES (?, ?, ?, ?, ?, ?)",
+                               (key.key_id, key.name, key.owner, key.role, key.secret_hash, _iso(key.created_at)))
+
+    def get_api_key(self, key_id: str) -> ApiKey | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM api_keys WHERE key_id = ?", (key_id,)).fetchone()
+        return self._to_key(row) if row else None
+
+    def list_api_keys(self) -> list[ApiKey]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM api_keys ORDER BY created_at, key_id").fetchall()
+        return [self._to_key(r) for r in rows]
+
+    def revoke_api_key(self, key_id: str, at: datetime) -> bool:
+        with self._lock:
+            cur = self._conn.execute("UPDATE api_keys SET revoked_at = ? WHERE key_id = ? AND revoked_at IS NULL",
+                                     (_iso(at), key_id))
+        return cur.rowcount == 1
 
     def deactivate(self, code: str) -> bool:
         """Soft delete: history and audit stay intact, and the code is never reused."""
