@@ -59,7 +59,7 @@ The run reports in `docs/evidence/scenarios/` show each of these with timestamps
 
 ## Automated review of every source file
 
-_Generated 2026-10-08: the review agent's rules (`sdlc/agents/review.py`) over all 57 files of `urlshort/` and `sdlc/`._
+_Generated 2026-10-08: the review agent's rules (`sdlc/agents/review.py`) over all 61 files of `urlshort/` and `sdlc/`._
 
 Findings: **0** (high 0, medium 0, low 0).
 
@@ -99,16 +99,20 @@ Findings: **0** (high 0, medium 0, low 0).
 - `urlshort/adapters/migrations/env.py`
 - `urlshort/adapters/migrations/versions/v2_baseline.py`
 - `urlshort/adapters/migrations/versions/v3_max_clicks.py`
+- `urlshort/adapters/migrations/versions/v4_click_events.py`
 - `urlshort/adapters/postgres.py`
 - `urlshort/adapters/redis_cache.py`
+- `urlshort/adapters/redis_events.py`
 - `urlshort/adapters/redis_ratelimit.py`
 - `urlshort/adapters/wiring.py`
+- `urlshort/adapters/workers.py`
 - `urlshort/analytics.py`
 - `urlshort/api.py`
 - `urlshort/audit.py`
 - `urlshort/codegen.py`
 - `urlshort/config.py`
 - `urlshort/errors.py`
+- `urlshort/events.py`
 - `urlshort/logging_setup.py`
 - `urlshort/main.py`
 - `urlshort/models.py`

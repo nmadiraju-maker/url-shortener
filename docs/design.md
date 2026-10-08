@@ -85,6 +85,7 @@ Migrations are expand-only (new nullable columns) and literal SQL; older databas
 | 009 | `clicks_by_hour` computed at read time | No schema change; rollups planned for scale | Rollup table updated on write |
 | 010 | Per-link stats token, stored as SHA-256 | Stats are private by default; a leaked database reveals no usable tokens | Public stats; owner accounts (planned) |
 | 011 | Production profile refuses unsafe configuration | Misconfiguration fails at deploy time with every problem listed | Warnings only |
+| 012 | Event-driven analytics via a transactional outbox and Redis Streams (optional) | No lost or double-counted clicks; redirects decoupled from analytics writes; replay | Dual writes; Kafka (no need at this scale; adapter possible behind the bus port) |
 
 ### Security model (STRIDE)
 
@@ -158,6 +159,6 @@ hash-chained audit log; metrics include success rate, retry and rollback frequen
 
 ## 3. Limitations and roadmap
 
-See `docs/final-summary.md`. Done: Postgres + Redis (cache, Bloom filter, distributed rate limiting). Planned
-(in order): Kafka-based analytics with an outbox and rollups; owner API keys and a secrets vault; metrics,
-tracing and load-test evidence.
+See `docs/final-summary.md`. Done: Postgres + Redis (cache, Bloom filter, distributed rate limiting);
+event-driven analytics with an outbox (`docs/events.md`). Planned: rollups and HyperLogLog in the aggregator;
+owner API keys and a secrets vault; metrics, tracing and load-test evidence.

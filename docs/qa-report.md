@@ -3,11 +3,11 @@
 _Generated 2026-10-08 from a fresh run: `pytest --cov=urlshort --cov=sdlc --cov-branch tests`._
 
 ## Results
-- Tests: **494**, failures 0, errors 0, skipped 0
+- Tests: **520**, failures 0, errors 0, skipped 0
 - Functional coverage: **32/32 acceptance criteria** verified by passing tests
 
 ## Unit coverage: `urlshort`
-1381/1381 lines and 314/314 branches.
+1657/1657 lines and 372/372 branches.
 
 | File | Lines | Branches | Missing |
 |---|---|---|---|
@@ -16,22 +16,26 @@ _Generated 2026-10-08 from a fresh run: `pytest --cov=urlshort --cov=sdlc --cov-
 | `urlshort/adapters/migrations/env.py` | 9/9 | 0/0 | - |
 | `urlshort/adapters/migrations/versions/v2_baseline.py` | 13/13 | 0/0 | - |
 | `urlshort/adapters/migrations/versions/v3_max_clicks.py` | 7/7 | 0/0 | - |
-| `urlshort/adapters/postgres.py` | 93/93 | 10/10 | - |
-| `urlshort/adapters/redis_cache.py` | 103/103 | 22/22 | - |
+| `urlshort/adapters/migrations/versions/v4_click_events.py` | 12/12 | 0/0 | - |
+| `urlshort/adapters/postgres.py` | 113/113 | 12/12 | - |
+| `urlshort/adapters/redis_cache.py` | 111/111 | 22/22 | - |
+| `urlshort/adapters/redis_events.py` | 45/45 | 6/6 | - |
 | `urlshort/adapters/redis_ratelimit.py` | 24/24 | 2/2 | - |
 | `urlshort/adapters/wiring.py` | 28/28 | 4/4 | - |
+| `urlshort/adapters/workers.py` | 43/43 | 14/14 | - |
 | `urlshort/analytics.py` | 46/46 | 16/16 | - |
 | `urlshort/api.py` | 47/47 | 8/8 | - |
 | `urlshort/audit.py` | 32/32 | 8/8 | - |
 | `urlshort/codegen.py` | 9/9 | 2/2 | - |
-| `urlshort/config.py` | 207/207 | 98/98 | - |
+| `urlshort/config.py` | 211/211 | 100/100 | - |
 | `urlshort/errors.py` | 29/29 | 0/0 | - |
+| `urlshort/events.py` | 118/118 | 30/30 | - |
 | `urlshort/logging_setup.py` | 92/92 | 24/24 | - |
 | `urlshort/main.py` | 17/17 | 0/0 | - |
 | `urlshort/models.py` | 39/39 | 0/0 | - |
 | `urlshort/ratelimit.py` | 52/52 | 12/12 | - |
-| `urlshort/service.py` | 113/113 | 22/22 | - |
-| `urlshort/storage.py` | 151/151 | 20/20 | - |
+| `urlshort/service.py` | 115/115 | 22/22 | - |
+| `urlshort/storage.py` | 175/175 | 24/24 | - |
 | `urlshort/validation.py` | 82/82 | 42/42 | - |
 | `urlshort/web/__init__.py` | 0/0 | 0/0 | - |
 | `urlshort/web/clientip.py` | 29/29 | 6/6 | - |
@@ -42,7 +46,7 @@ _Generated 2026-10-08 from a fresh run: `pytest --cov=urlshort --cov=sdlc --cov-
 | `urlshort/web/routes_redirect.py` | 13/13 | 0/0 | - |
 
 ## Unit coverage: `sdlc`
-1894/1894 lines and 548/548 branches.
+1907/1907 lines and 548/548 branches.
 
 | File | Lines | Branches | Missing |
 |---|---|---|---|
@@ -54,7 +58,7 @@ _Generated 2026-10-08 from a fresh run: `pytest --cov=urlshort --cov=sdlc --cov-
 | `sdlc/agents/development.py` | 98/98 | 40/40 | - |
 | `sdlc/agents/docs.py` | 57/57 | 14/14 | - |
 | `sdlc/agents/impact.py` | 79/79 | 34/34 | - |
-| `sdlc/agents/qa.py` | 80/80 | 20/20 | - |
+| `sdlc/agents/qa.py` | 93/93 | 20/20 | - |
 | `sdlc/agents/registry.py` | 17/17 | 0/0 | - |
 | `sdlc/agents/release.py` | 31/31 | 4/4 | - |
 | `sdlc/agents/requirements.py` | 57/57 | 14/14 | - |

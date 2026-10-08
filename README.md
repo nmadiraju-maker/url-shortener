@@ -39,7 +39,7 @@ open runs/brownfield/run-report.md
 |---|---|
 | Core API | Create (idempotent), 307 redirect, details, admin takedown; JSON error envelope with request IDs |
 | Links | Custom aliases, expiry, click caps enforced atomically (`max_clicks`) |
-| Analytics | Bots separated, no raw IPs (daily keyed visitor IDs), referrer domains, clicks by day and hour, stats protected by a per-link token |
+| Analytics | Bots separated, no raw IPs (daily keyed visitor IDs), referrer domains, clicks by day and hour, stats protected by a per-link token; optional event pipeline (outbox, Redis Streams, idempotent aggregator, DLQ, replay: `docs/events.md`) |
 | Safety | SSRF protection, credentials and shortener chains rejected, look-alike (mixed-script) domains rejected |
 | Abuse | GCRA rate limits on creates and redirects, `RateLimit-*` and `Retry-After` headers |
 | Operations | JSON logs with redaction, liveness/readiness probes, security headers, CORS, trusted proxies, production profile that refuses unsafe settings, non-root container |
@@ -84,7 +84,7 @@ Regenerate the generated documents with `python scripts/generate_sdlc_docs.py`.
 ## Honest limitations
 
 Agents run deterministically (prepared change plans; an LLM-backed requirements agent with fallback). No
-real model responses are recorded here. Streaming analytics, owner accounts and observability are
-planned. Details: `docs/final-summary.md`.
+real model responses are recorded here. Owner accounts and observability are planned. Details:
+`docs/final-summary.md`.
 
 Built with an AI assistant (Claude); see `docs/ai-usage.md`.
