@@ -1,0 +1,65 @@
+# Final engineering summary
+
+## What was built
+
+A URL shortener service and a governed, agentic SDLC orchestrator that delivered three of its features.
+
+| Area | Result |
+|---|---|
+| Service | Core API (create, redirect, details, admin takedown), custom aliases, expiry, click caps, privacy-safe analytics with protected stats, clicks by hour, SSRF and look-alike domain protection, GCRA rate limiting, trusted proxies, security headers, CORS, JSON logging with redaction, hash-chained audit, production profile, container |
+| Orchestrator | Dependency graph with entry/exit gates, parallel stages, retries, fallback agents, rollback, rework, dynamic re-planning, human approvals (approve/reject/amend/pause), safe-stop, policy guardrails, hash-chained audit, metrics, CLI with gated `promote` |
+| Agents | 12 agents including an LLM-backed requirements agent with strict validation and deterministic fallback |
+| Scenarios | Greenfield (governed build), brownfield (`max_clicks` → v0.10.0), ambiguous (clarification and mid-run re-plan → v0.11.0), ambiguous via the LLM agent |
+
+## Plan and rationale
+
+1. Walking skeleton with CI first, so every later change was gated from day one.
+2. Service features in small, reviewed commits, each hardening an earlier weakness (privacy, abuse, operability).
+3. Orchestrator core, then agents, then scenarios, each held to the same gates as the service.
+4. Real features delivered through the orchestrator, then merged with `promote`.
+5. Required documents generated from code and runs wherever possible, so they cannot drift.
+
+## Artifacts
+
+| Artifact | Location |
+|---|---|
+| User stories and acceptance criteria, traceability | `docs/requirements.md` |
+| Design, architecture, decisions, threat model | `docs/design.md`, `docs/orchestrator.md` |
+| Code review report | `docs/code-review-report.md` |
+| QA report (unit and functional coverage) | `docs/qa-report.md` |
+| Scenario evidence (run reports, metrics, artifacts) | `docs/evidence/scenarios/`, CI artifact `sdlc-run-reports` |
+| AI decision and failure ledgers | `docs/ai-usage.md` |
+| API, logging, production, scenarios | `docs/api.md`, `docs/logging.md`, `docs/production.md`, `docs/scenarios.md` |
+
+## Validation
+
+- 469 tests; 100% line and branch coverage for both `urlshort` and `sdlc`; 32/32 acceptance criteria
+  verified by passing tests; 0 findings from the review agent over every source file.
+- CI on every pull request: ruff, `mypy --strict`, bandit, pip-audit, tests on Python 3.11 and 3.12,
+  Docker image + smoke test + production-mode checks, and four SDLC scenarios with audit-chain verification.
+- Concurrency-sensitive code checked under load: click caps (40 parallel redirects), rate limiter (50
+  parallel requests), audit chain (concurrent writers), orchestrator (25 consecutive runs per Python version).
+
+## Risks and trade-offs
+
+| Choice | Trade-off |
+|---|---|
+| SQLite | Simple and transactional, but one writer at a time; Postgres is the planned adapter |
+| In-process rate limiting | Exact per instance, not across instances; Redis GCRA planned |
+| Read-time analytics | Fine at current volume; rollups and streaming planned |
+| Deterministic agents | Reproducible and fully testable, but they apply prepared change plans rather than generate code |
+| Per-link stats tokens | Private by default, but a lost token cannot be recovered; owner API keys planned |
+| Static shortener and look-alike rules | No network calls on create; a reputation service would catch more |
+
+## Assumptions
+
+- Single region; one service instance per database file.
+- Clients are identified by IP until owner API keys exist; the load balancer's addresses are configured.
+- Scenario approvals are recorded decisions by named roles, standing in for real reviewers.
+
+## Known limitations
+
+- No real LLM responses are recorded in the repository (see `docs/ai-usage.md`).
+- Greenfield replays the reviewed v0.9.0 baseline; it demonstrates governance, not code generation.
+- The audit trail is tamper-evident, not tamper-proof (no external anchoring yet).
+- No user accounts; stats are protected by per-link tokens or the admin key.
