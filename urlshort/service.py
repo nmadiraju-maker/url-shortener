@@ -19,6 +19,7 @@ from .config import Settings
 from .errors import AliasConflict, CodeSpaceExhausted, LinkExhausted, LinkExpired, NotFound, StorageUnavailable
 from .events import new_event_id
 from .storage import Click, Link, Repository
+from .throttled import ThrottledLog
 from .validation import validate_alias, validate_max_clicks, validate_ttl, validate_url
 
 log = logging.getLogger("urlshort.service")
@@ -46,6 +47,7 @@ class ShortenerService:
     def __init__(self, repo: Repository, settings: Settings, *, clock: Callable[[], datetime] = utcnow,
                  code_factory: Callable[[int], str] = random_code) -> None:
         self.repo = repo
+        self._click_failed = ThrottledLog(log, "click recording failed; redirects continue", level=logging.ERROR)
         self.settings = settings
         self.clock = clock
         self.code_factory = code_factory
@@ -112,7 +114,7 @@ class ShortenerService:
         try:
             self.repo.record_click(click, as_event=as_event)
         except Exception:  # uncapped: fail open, analytics must never break a redirect
-            log.exception("click recording failed", extra={"code": code})
+            self._click_failed()      # throttled: an outage must not turn every redirect into an error line
         return link.target_url
 
     def deactivate(self, code: str, *, actor: str) -> None:
