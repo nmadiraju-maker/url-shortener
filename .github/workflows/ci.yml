@@ -33,7 +33,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - run: ruff check urlshort tests
+      - run: ruff check urlshort sdlc tests
 
   typecheck:
     name: Type check (mypy --strict)
@@ -47,7 +47,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - run: mypy   # strict mode and target package are configured in pyproject.toml
+      - run: mypy   # strict mode and target packages (urlshort, sdlc) are configured in pyproject.toml
 
   security:
     name: Security (bandit, pip-audit)
@@ -61,8 +61,12 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - name: Bandit - no findings at any severity
+      - name: Bandit - service has no findings at any severity
         run: bandit -q -r urlshort
+      - name: Bandit - orchestrator has no findings at medium severity or above
+        # Low-severity B404/B603 remain by design: the orchestrator must run git (argument lists, no shell,
+        # absolute executable path). Everything else is held to medium and above.
+        run: bandit -q -r sdlc -ll
       - name: pip-audit - no known vulnerabilities in runtime dependencies
         run: pip-audit -r requirements.txt --progress-spinner off
 
@@ -82,12 +86,16 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - name: Tests with a 100% line and branch coverage gate
+      - name: Tests with coverage
         run: >
           pytest -p no:cacheprovider
-          --cov=urlshort --cov-branch --cov-fail-under=100
+          --cov=urlshort --cov=sdlc --cov-branch
           --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov
           --junitxml=junit.xml
+      - name: 100% line and branch coverage - service
+        run: coverage report --include="urlshort/*" --fail-under=100
+      - name: 100% line and branch coverage - orchestrator
+        run: coverage report --include="sdlc/*" --fail-under=100
       - uses: actions/upload-artifact@v4
         if: always()
         with:

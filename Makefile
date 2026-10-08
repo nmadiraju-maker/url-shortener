@@ -9,14 +9,17 @@ run:
 test:
 	pytest
 lint:
-	ruff check urlshort tests
+	ruff check urlshort sdlc tests
 typecheck:
 	mypy
 security:
 	bandit -q -r urlshort
+	bandit -q -r sdlc -ll
 	pip-audit -r requirements.txt --progress-spinner off
 smoke:
 	./scripts/smoke_test.sh http://localhost:8000
 # Same gates as CI (except the Docker integration job)
 ci: lint typecheck security
-	pytest --cov=urlshort --cov-branch --cov-fail-under=100
+	pytest --cov=urlshort --cov=sdlc --cov-branch
+	coverage report --include="urlshort/*" --fail-under=100
+	coverage report --include="sdlc/*" --fail-under=100
