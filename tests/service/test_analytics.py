@@ -60,8 +60,8 @@ def click(at: datetime, *, bot: bool = False, ref: str | None = None, ip: int | 
 
 
 def test_summarise_empty() -> None:
-    assert summarise([]) == {"total_clicks": 0, "bot_clicks": 0, "clicks_by_day": {}, "unique_visitors_by_day": {},
-                             "top_referrers": [], "agents": {}, "last_click_at": None}
+    assert summarise([]) == {"total_clicks": 0, "bot_clicks": 0, "clicks_by_day": {}, "clicks_by_hour": {},
+                             "unique_visitors_by_day": {}, "top_referrers": [], "agents": {}, "last_click_at": None}
 
 
 def test_summarise_mixed_traffic() -> None:
