@@ -16,9 +16,9 @@ from . import analytics
 from .audit import AuditTrail
 from .codegen import random_code
 from .config import Settings
-from .errors import AliasConflict, CodeSpaceExhausted, LinkExpired, NotFound
+from .errors import AliasConflict, CodeSpaceExhausted, LinkExhausted, LinkExpired, NotFound, StorageUnavailable
 from .storage import Click, Link, Repository
-from .validation import validate_alias, validate_ttl, validate_url
+from .validation import validate_alias, validate_max_clicks, validate_ttl, validate_url
 
 log = logging.getLogger("urlshort.service")
 MAX_CODE_ATTEMPTS = 5
@@ -53,7 +53,7 @@ class ShortenerService:
 
     # ---------------------------------------------------------------- commands
     def shorten(self, url: str, *, owner: str, alias: str | None = None,
-                ttl_seconds: int | None = None) -> CreateResult:
+                ttl_seconds: int | None = None, max_clicks: int | None = None) -> CreateResult:
         """Create a link.
 
         Idempotent for a repeated (owner, url) with no alias and no TTL: the existing permanent link
@@ -64,7 +64,8 @@ class ShortenerService:
                               blocked_domains=self.settings.blocked_domains,
                               shorteners=self.settings.known_shorteners, self_host=self._self_host)
         ttl = validate_ttl(ttl_seconds, max_ttl=self.settings.max_ttl_seconds)
-        if alias is None and ttl is None:
+        limit = validate_max_clicks(max_clicks)
+        if alias is None and ttl is None and limit is None:   # only plain permanent links are reused
             existing = self.repo.find_reusable_link(owner, target)
             if existing is not None:
                 return CreateResult(existing, created=False, stats_token=None)
@@ -73,13 +74,14 @@ class ShortenerService:
         token = secrets.token_urlsafe(32)
         token_hash = hash_token(token)
         if alias is not None:
-            link = self._new_link(validate_alias(alias), target, owner, now, expires, token_hash)
+            link = self._new_link(validate_alias(alias), target, owner, now, expires, token_hash, limit)
             self.repo.insert_link(link)  # duplicate alias -> AliasConflict from the database
         else:
-            link = self._insert_with_generated_code(target, owner, now, expires, token_hash)
+            link = self._insert_with_generated_code(target, owner, now, expires, token_hash, limit)
         self.audit.record(when=now, actor=owner, action="link.create", target=link.code,
                           details={"target_url": target, "custom_alias": alias is not None,
-                                   "expires_at": expires.isoformat() if expires else None})
+                                   "expires_at": expires.isoformat() if expires else None,
+                                   "max_clicks": limit})
         log.info("link created", extra={"code": link.code, "custom_alias": alias is not None})
         return CreateResult(link, created=True, stats_token=token)
 
@@ -94,9 +96,20 @@ class ShortenerService:
         ip_id, key_id = analytics.visitor_id(client_ip, self.settings.ip_hash_salt, now)
         click = Click(code=code, ts=now, referrer_host=analytics.referrer_host(referrer), agent_family=family,
                       is_bot=is_bot, ip_id=ip_id, ip_key_id=key_id)
+        if link.max_clicks is not None:
+            # Capped link: the count IS the business rule, so check-and-count atomically and fail closed
+            # (503) if storage is unavailable. Never trust the snapshot read above.
+            try:
+                allowed = self.repo.record_click_with_limit(click)
+            except Exception as exc:
+                log.exception("click limit check failed", extra={"code": code})
+                raise StorageUnavailable("could not verify the click limit; please retry") from exc
+            if not allowed:
+                raise LinkExhausted(f"link '{code}' has reached its click limit")
+            return link.target_url
         try:
             self.repo.record_click(click)
-        except Exception:  # fail open: analytics must never break a redirect (availability > completeness)
+        except Exception:  # uncapped: fail open, analytics must never break a redirect
             log.exception("click recording failed", extra={"code": code})
         return link.target_url
 
@@ -134,16 +147,17 @@ class ShortenerService:
 
     @staticmethod
     def _new_link(code: str, target: str, owner: str, now: datetime, expires: datetime | None,
-                  token_hash: str | None) -> Link:
+                  token_hash: str | None, max_clicks: int | None = None) -> Link:
         return Link(code=code, target_url=target, owner=owner, created_at=now, expires_at=expires,
-                    is_active=True, click_count=0, stats_token_hash=token_hash)
+                    is_active=True, click_count=0, stats_token_hash=token_hash, max_clicks=max_clicks)
 
     def _insert_with_generated_code(self, target: str, owner: str, now: datetime,
-                                    expires: datetime | None, token_hash: str | None) -> Link:
+                                    expires: datetime | None, token_hash: str | None,
+                                    max_clicks: int | None = None) -> Link:
         """Insert with a fresh random code, retrying a bounded number of times on collision."""
         for attempt in range(1, MAX_CODE_ATTEMPTS + 1):
             code = self.code_factory(self.settings.code_length)
-            link = self._new_link(code, target, owner, now, expires, token_hash)
+            link = self._new_link(code, target, owner, now, expires, token_hash, max_clicks)
             try:
                 self.repo.insert_link(link)
                 return link

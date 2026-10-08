@@ -49,4 +49,5 @@ class AppContext:
     def to_response(self, link: Link) -> LinkResponse:
         return LinkResponse(code=link.code, short_url=f"{self.settings.base_url}/{link.code}",
                             target_url=link.target_url, created_at=link.created_at, expires_at=link.expires_at,
-                            is_active=link.is_active, click_count=link.click_count)
+                            is_active=link.is_active, click_count=link.click_count,
+                            max_clicks=link.max_clicks)

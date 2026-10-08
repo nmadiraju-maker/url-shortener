@@ -33,7 +33,8 @@ def build(ctx: AppContext) -> APIRouter:
                     x_owner: str | None = Header(default=None)) -> CreateLinkResponse:
         """Create a short link. Returns 201 when created, 200 when an identical permanent link is reused."""
         owner = (x_owner or "anonymous").strip()[:OWNER_MAX] or "anonymous"
-        result = service.shorten(body.url, owner=owner, alias=body.custom_alias, ttl_seconds=body.ttl_seconds)
+        result = service.shorten(body.url, owner=owner, alias=body.custom_alias, ttl_seconds=body.ttl_seconds,
+                                 max_clicks=body.max_clicks)
         if not result.created:
             response.status_code = 200
         response.headers["Cache-Control"] = "no-store"   # the body may contain a secret token

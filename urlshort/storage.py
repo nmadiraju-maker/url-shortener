@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS links (
     expires_at  TEXT,
     is_active   INTEGER NOT NULL DEFAULT 1,
     click_count INTEGER NOT NULL DEFAULT 0,
-    stats_token_hash TEXT
+    stats_token_hash TEXT,
+    max_clicks INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_links_owner_target ON links(owner, target_url);
 CREATE TABLE IF NOT EXISTS clicks (
@@ -56,15 +57,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
     hash      TEXT NOT NULL
 );
 """
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # version -> steps added in that version: (table, column, complete DDL). Expand-only and nullable.
 # Every statement is a literal; nothing is built from strings at runtime.
 MIGRATIONS: dict[int, tuple[tuple[str, str, str], ...]] = {
     2: (("links", "stats_token_hash", "ALTER TABLE links ADD COLUMN stats_token_hash TEXT"),
         ("clicks", "ip_id", "ALTER TABLE clicks ADD COLUMN ip_id INTEGER"),
         ("clicks", "ip_key_id", "ALTER TABLE clicks ADD COLUMN ip_key_id TEXT")),
+    3: (("links", "max_clicks", "ALTER TABLE links ADD COLUMN max_clicks INTEGER"),),
 }
-SET_SCHEMA_VERSION = "PRAGMA user_version = 2"
+SET_SCHEMA_VERSION = "PRAGMA user_version = 3"
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ class Link:
     is_active: bool
     click_count: int
     stats_token_hash: str | None = None   # sha256 of the per-link stats token; the token itself is never stored
+    max_clicks: int | None = None         # human clicks allowed; None means unlimited
 
 
 @dataclass(frozen=True)
@@ -112,6 +115,7 @@ class Repository(Protocol):
     def find_reusable_link(self, owner: str, target_url: str) -> Link | None: ...
     def deactivate(self, code: str) -> bool: ...
     def record_click(self, click: Click) -> None: ...
+    def record_click_with_limit(self, click: Click) -> bool: ...
     def clicks_for(self, code: str) -> list[Click]: ...
     def append_audit(self, ts: str, actor: str, action: str, target: str, details: str, chain: ChainFn) -> str: ...
     def audit_records(self) -> list[AuditRecord]: ...
@@ -167,18 +171,18 @@ class SqliteRepository:
                     created_at=_dt(row["created_at"]),
                     expires_at=_dt(row["expires_at"]) if row["expires_at"] else None,
                     is_active=bool(row["is_active"]), click_count=row["click_count"],
-                    stats_token_hash=row["stats_token_hash"])
+                    stats_token_hash=row["stats_token_hash"], max_clicks=row["max_clicks"])
 
     # ---------------------------------------------------------------- links
     def insert_link(self, link: Link) -> None:
         params = (link.code, link.target_url, link.owner, _iso(link.created_at),
                   _iso(link.expires_at) if link.expires_at else None, int(link.is_active), link.click_count,
-                  link.stats_token_hash)
+                  link.stats_token_hash, link.max_clicks)
         try:
             with self._lock:
                 self._conn.execute(
                     "INSERT INTO links(code, target_url, owner, created_at, expires_at, is_active, click_count,"
-                    " stats_token_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", params)
+                    " stats_token_hash, max_clicks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", params)
         except sqlite3.IntegrityError as exc:
             # The database is the final judge of uniqueness (no check-then-insert race). Only a
             # duplicate primary key means "code taken"; other violations are bugs and must surface.
@@ -200,7 +204,7 @@ class SqliteRepository:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM links WHERE owner = ? AND target_url = ? AND is_active = 1 AND expires_at IS NULL"
-                " ORDER BY created_at DESC LIMIT 1", (owner, target_url)).fetchone()
+                " AND max_clicks IS NULL ORDER BY created_at DESC LIMIT 1", (owner, target_url)).fetchone()
         return self._to_link(row) if row else None
 
     def deactivate(self, code: str) -> bool:
@@ -223,6 +227,37 @@ class SqliteRepository:
                 if not click.is_bot:
                     self._conn.execute("UPDATE links SET click_count = click_count + 1 WHERE code = ?", (click.code,))
                 self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+
+    def record_click_with_limit(self, click: Click) -> bool:
+        """Atomically enforce max_clicks and record the click. Returns False when the cap is reached.
+
+        The check and the increment are ONE conditional UPDATE inside BEGIN IMMEDIATE, so concurrent
+        redirects (threads or processes) can never overshoot the cap. Bots are checked against the cap but
+        do not consume it.
+        """
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if click.is_bot:
+                    allowed = self._conn.execute(
+                        "SELECT 1 FROM links WHERE code = ? AND (max_clicks IS NULL OR click_count < max_clicks)",
+                        (click.code,)).fetchone() is not None
+                else:
+                    allowed = self._conn.execute(
+                        "UPDATE links SET click_count = click_count + 1"
+                        " WHERE code = ? AND (max_clicks IS NULL OR click_count < max_clicks)",
+                        (click.code,)).rowcount == 1
+                if allowed:
+                    self._conn.execute(
+                        "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (click.code, _iso(click.ts), click.referrer_host, click.agent_family, int(click.is_bot),
+                         click.ip_id, click.ip_key_id))
+                self._conn.execute("COMMIT")
+                return allowed
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
