@@ -1,12 +1,13 @@
-# Release v0.10.0
+# Release v0.11.0
 
 ## Stories delivered
-- US-01 open a short link and land on the target (AC-REDIRECT-1, AC-REDIRECT-2)
+- US-01 submit a long URL and receive a short link (AC-SHORTEN-1, AC-SHORTEN-2, AC-SHORTEN-3)
 - US-02 see click analytics for my link (AC-ANALYTICS-1, AC-ANALYTICS-2, AC-ANALYTICS-3, AC-ANALYTICS-4)
-- US-03 cap how many times a link can be used (AC-MAXCLICKS-1, AC-MAXCLICKS-2, AC-MAXCLICKS-3)
+- US-03 reject look-alike (homoglyph) domains (AC-LOOKALIKE-1, AC-LOOKALIKE-2)
+- US-04 see clicks by hour of day (UTC) (AC-HOURLY-1)
 
 ## Quality
-- 301 tests passing; coverage 100.0%; AC coverage 100.0%
+- 312 tests passing; coverage 100.0%; AC coverage 100.0%
 
 ## Readiness checklist
 - [x] all_artifacts_present
