@@ -126,7 +126,9 @@ class PolicyEngine:
                 if _is_formatted_sql(name, node):
                     out.append(Violation("SEC-003", "security", BLOCK,
                                          "SQL built with string formatting; use parameters", loc))
-                if name.split(".")[-1] in LOG_METHODS and name.split(".")[0] in {"log", "logger", "logging"}:
+                # Production code only: tests must be able to log synthetic sensitive fields to prove redaction.
+                if (name.split(".")[-1] in LOG_METHODS and name.split(".")[0] in {"log", "logger", "logging"}
+                        and not path.startswith("tests/")):
                     leaked = _names_in(node) & PII_NAMES
                     if leaked:
                         out.append(Violation("CMP-001", "compliance", BLOCK,

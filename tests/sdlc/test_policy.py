@@ -71,3 +71,11 @@ def test_security_boundaries_of_this_codebase_need_approval(path: str) -> None:
 @pytest.mark.parametrize("path", ["sdlc/policy.py", "sdlc/agents/review.py", ".git/config"])
 def test_agents_cannot_touch_their_own_guardrails(path: str) -> None:
     assert any(v.rule == "CHG-001" and v.outcome == BLOCK for v in P.check_changes({path: ""}))
+
+
+def test_pii_in_logs_rule_applies_to_production_code_not_tests() -> None:
+    """Regression (greenfield scenario): a redaction test must be able to log a synthetic client_ip."""
+    src = "log.info('x', extra={'client_ip': '203.0.113.7'})\n"
+    assert P.scan_code({"tests/service/test_logging.py": src}) == []
+    assert P.scan_code({"urlshort/service.py": src})[0].rule == "CMP-001"
+    assert P.scan_code({"tests/test_x.py": "eval('1')\n"})[0].rule == "SEC-001"   # other rules still apply to tests

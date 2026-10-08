@@ -1,0 +1,190 @@
+{
+  "name": "greenfield",
+  "description": "Governance over a full build: the v0.9.0 service is materialised from its tag through every gate. Offline mode replays the reviewed baseline; it does not generate code.",
+  "workspace": {
+    "seed": "empty"
+  },
+  "engine": {
+    "faults": {
+      "qa": {
+        "transient_failures": 1
+      }
+    }
+  },
+  "inputs": {
+    "requirements": {
+      "title": "URL shortener v0.9",
+      "requirement": "Build a URL shortener core API to shorten links and redirect, with custom alias support, link expiry (ttl), click analytics, admin takedown, rate limiting, health checks, an audit trail, URL safety (SSRF), trusted load balancer proxy handling, security headers and CORS for browser origins."
+    }
+  },
+  "stages": [
+    {
+      "id": "requirements",
+      "agent": "requirements",
+      "exit_gates": [
+        "stories_have_acceptance_criteria"
+      ]
+    },
+    {
+      "id": "design",
+      "agent": "design",
+      "exit_gates": [
+        "api_contract_defined",
+        "threat_model_present"
+      ],
+      "requires_approval": true,
+      "depends_on": [
+        "requirements"
+      ],
+      "entry_gates": [
+        "requirements"
+      ],
+      "params": {
+        "greenfield": true
+      }
+    },
+    {
+      "id": "development",
+      "agent": "development",
+      "depends_on": [
+        "design"
+      ],
+      "entry_gates": [
+        "design"
+      ],
+      "exit_gates": [
+        "compiles"
+      ],
+      "mutates_workspace": true,
+      "max_retries": 1,
+      "params": {
+        "mode": "materialize",
+        "ref": "v0.9.0",
+        "commit_plan": [
+          {
+            "paths": [
+              "pyproject.toml",
+              "requirements.txt",
+              ".gitignore",
+              "config"
+            ],
+            "message": "chore: project tooling, dependencies and configuration"
+          },
+          {
+            "paths": [
+              "urlshort/__init__.py",
+              "urlshort/config.py",
+              "urlshort/errors.py",
+              "urlshort/validation.py",
+              "urlshort/codegen.py"
+            ],
+            "message": "feat(core): settings, domain errors, validation with SSRF guardrails, code generation"
+          },
+          {
+            "paths": [
+              "urlshort/storage.py",
+              "urlshort/audit.py"
+            ],
+            "message": "feat(storage): repository port, SQLite adapter, hash-chained audit trail"
+          },
+          {
+            "paths": [
+              "urlshort/analytics.py",
+              "urlshort/ratelimit.py"
+            ],
+            "message": "feat(analytics): privacy-safe click analytics and GCRA rate limiting"
+          },
+          {
+            "paths": [
+              "urlshort/service.py",
+              "urlshort/models.py",
+              "urlshort/logging_setup.py",
+              "urlshort/api.py",
+              "urlshort/main.py",
+              "urlshort/web"
+            ],
+            "message": "feat(api): service layer, HTTP routers, middleware, JSON logging, entry point"
+          },
+          {
+            "paths": [
+              "tests/__init__.py",
+              "tests/service"
+            ],
+            "message": "test(service): AC-traced functional and unit tests"
+          }
+        ]
+      }
+    },
+    {
+      "id": "review",
+      "agent": "review",
+      "depends_on": [
+        "development"
+      ],
+      "entry_gates": [
+        "code_change"
+      ],
+      "exit_gates": [
+        "no_high_findings"
+      ]
+    },
+    {
+      "id": "qa",
+      "agent": "qa",
+      "depends_on": [
+        "review"
+      ],
+      "max_retries": 2,
+      "exit_gates": [
+        "tests_pass",
+        "coverage_threshold_met",
+        "acceptance_criteria_traced"
+      ],
+      "params": {
+        "coverage_threshold": 100
+      }
+    },
+    {
+      "id": "security",
+      "agent": "security",
+      "depends_on": [
+        "review"
+      ],
+      "exit_gates": [
+        "no_blocking_findings",
+        "dependencies_pinned"
+      ]
+    },
+    {
+      "id": "docs",
+      "agent": "docs",
+      "fallback_agent": "docs_static",
+      "depends_on": [
+        "review"
+      ],
+      "mutates_workspace": true,
+      "exit_gates": [
+        "api_documented"
+      ],
+      "critical": false
+    },
+    {
+      "id": "release",
+      "agent": "release",
+      "depends_on": [
+        "qa",
+        "security",
+        "docs"
+      ],
+      "mutates_workspace": true,
+      "requires_approval": true,
+      "impact": "high",
+      "exit_gates": [
+        "all_gates_green"
+      ],
+      "params": {
+        "version": "0.9.0"
+      }
+    }
+  ]
+}

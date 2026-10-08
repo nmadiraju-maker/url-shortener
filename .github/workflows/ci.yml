@@ -150,3 +150,43 @@ jobs:
       - name: Container logs
         if: always()
         run: docker logs urlshort
+
+  scenarios:
+    name: SDLC scenarios (orchestrator end to end)
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck, security, test]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # scenarios build on tagged baselines (v0.9.0, v0.10.0)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Baseline tags exist
+        run: |
+          for tag in v0.9.0 v0.10.0; do
+            git rev-parse -q --verify "refs/tags/$tag" >/dev/null \
+              || { echo "::error::tag $tag is missing; push it with: git push origin $tag"; exit 1; }
+          done
+      - name: Greenfield - governance over a full build
+        run: python -m sdlc.cli run scenarios/greenfield.json --approvals scenarios/approvals/greenfield.json --run-dir runs/greenfield
+      - name: Brownfield - click caps with migration review, flawed drafts caught
+        run: python -m sdlc.cli run scenarios/brownfield.json --approvals scenarios/approvals/brownfield.json --run-dir runs/brownfield
+      - name: Ambiguous - clarification and mid-run re-plan
+        run: python -m sdlc.cli run scenarios/ambiguous.json --approvals scenarios/approvals/ambiguous.json --run-dir runs/ambiguous
+      - name: Audit chains verify
+        run: for run in greenfield brownfield ambiguous; do python -m sdlc.cli verify "runs/$run"; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sdlc-run-reports
+          path: |
+            runs/*/run-report.md
+            runs/*/metrics.json
+            runs/*/audit.jsonl
+            runs/*/artifacts/
+          retention-days: 30
