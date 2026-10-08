@@ -3,11 +3,11 @@
 _Generated 2026-10-08 from a fresh run: `pytest --cov=urlshort --cov=sdlc --cov-branch tests`._
 
 ## Results
-- Tests: **520**, failures 0, errors 0, skipped 0
+- Tests: **537**, failures 0, errors 0, skipped 0
 - Functional coverage: **32/32 acceptance criteria** verified by passing tests
 
 ## Unit coverage: `urlshort`
-1657/1657 lines and 372/372 branches.
+1875/1875 lines and 428/428 branches.
 
 | File | Lines | Branches | Missing |
 |---|---|---|---|
@@ -17,17 +17,20 @@ _Generated 2026-10-08 from a fresh run: `pytest --cov=urlshort --cov=sdlc --cov-
 | `urlshort/adapters/migrations/versions/v2_baseline.py` | 13/13 | 0/0 | - |
 | `urlshort/adapters/migrations/versions/v3_max_clicks.py` | 7/7 | 0/0 | - |
 | `urlshort/adapters/migrations/versions/v4_click_events.py` | 12/12 | 0/0 | - |
-| `urlshort/adapters/postgres.py` | 113/113 | 12/12 | - |
-| `urlshort/adapters/redis_cache.py` | 111/111 | 22/22 | - |
+| `urlshort/adapters/migrations/versions/v5_api_keys.py` | 7/7 | 0/0 | - |
+| `urlshort/adapters/postgres.py` | 131/131 | 12/12 | - |
+| `urlshort/adapters/redis_cache.py` | 119/119 | 22/22 | - |
 | `urlshort/adapters/redis_events.py` | 45/45 | 6/6 | - |
 | `urlshort/adapters/redis_ratelimit.py` | 24/24 | 2/2 | - |
 | `urlshort/adapters/wiring.py` | 28/28 | 4/4 | - |
 | `urlshort/adapters/workers.py` | 43/43 | 14/14 | - |
+| `urlshort/admin_cli.py` | 50/50 | 14/14 | - |
 | `urlshort/analytics.py` | 46/46 | 16/16 | - |
 | `urlshort/api.py` | 47/47 | 8/8 | - |
-| `urlshort/audit.py` | 32/32 | 8/8 | - |
+| `urlshort/audit.py` | 56/56 | 20/20 | - |
+| `urlshort/auth.py` | 49/49 | 14/14 | - |
 | `urlshort/codegen.py` | 9/9 | 2/2 | - |
-| `urlshort/config.py` | 211/211 | 100/100 | - |
+| `urlshort/config.py` | 227/227 | 106/106 | - |
 | `urlshort/errors.py` | 29/29 | 0/0 | - |
 | `urlshort/events.py` | 118/118 | 30/30 | - |
 | `urlshort/logging_setup.py` | 92/92 | 24/24 | - |
@@ -35,13 +38,13 @@ _Generated 2026-10-08 from a fresh run: `pytest --cov=urlshort --cov=sdlc --cov-
 | `urlshort/models.py` | 39/39 | 0/0 | - |
 | `urlshort/ratelimit.py` | 52/52 | 12/12 | - |
 | `urlshort/service.py` | 115/115 | 22/22 | - |
-| `urlshort/storage.py` | 175/175 | 24/24 | - |
+| `urlshort/storage.py` | 202/202 | 24/24 | - |
 | `urlshort/validation.py` | 82/82 | 42/42 | - |
 | `urlshort/web/__init__.py` | 0/0 | 0/0 | - |
 | `urlshort/web/clientip.py` | 29/29 | 6/6 | - |
-| `urlshort/web/context.py` | 35/35 | 2/2 | - |
+| `urlshort/web/context.py` | 40/40 | 6/6 | - |
 | `urlshort/web/middleware.py` | 56/56 | 10/10 | - |
-| `urlshort/web/routes_links.py` | 38/38 | 6/6 | - |
+| `urlshort/web/routes_links.py` | 52/52 | 12/12 | - |
 | `urlshort/web/routes_ops.py` | 16/16 | 0/0 | - |
 | `urlshort/web/routes_redirect.py` | 13/13 | 0/0 | - |
 

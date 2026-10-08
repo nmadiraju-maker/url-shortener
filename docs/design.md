@@ -86,13 +86,15 @@ Migrations are expand-only (new nullable columns) and literal SQL; older databas
 | 010 | Per-link stats token, stored as SHA-256 | Stats are private by default; a leaked database reveals no usable tokens | Public stats; owner accounts (planned) |
 | 011 | Production profile refuses unsafe configuration | Misconfiguration fails at deploy time with every problem listed | Warnings only |
 | 012 | Event-driven analytics via a transactional outbox and Redis Streams (optional) | No lost or double-counted clicks; redirects decoupled from analytics writes; replay | Dual writes; Kafka (no need at this scale; adapter possible behind the bus port) |
+| 013 | Hashed, revocable owner and admin API keys; per-caller audit identity | Least privilege; who did what is provable; X-Owner cannot be spoofed with a key | Shared admin key only; OAuth (not needed for a service API) |
+| 014 | Secrets from files; signed audit checkpoints | Vault/Kubernetes compatible without an SDK; detects full rewrites and truncation | Vault SDK; anchoring to a blockchain |
 
 ### Security model (STRIDE)
 
 | Threat | Example | Mitigation |
 |---|---|---|
-| Spoofing | Faking a client IP via `X-Forwarded-For` | Header trusted only from configured proxies, read right to left |
-| Tampering | Editing audit history | SHA-256 hash chain; `verify()` detects edits, deletions, reordering |
+| Spoofing | Faking a client IP via `X-Forwarded-For`; claiming another owner | Header trusted only from configured proxies, read right to left; owner keys bind the owner |
+| Tampering | Editing or rewriting audit history | SHA-256 hash chain; signed checkpoints detect full rewrites and truncation |
 | Repudiation | Denying a takedown | Audit record with actor and timestamp |
 | Information disclosure | Personal data in analytics or logs; reading others' stats | Keyed visitor IDs; log redaction; stats tokens; 401 for unknown codes |
 | Denial of service | Mass creation, code scanning | GCRA limits on creates and redirects; bounded memory |
@@ -160,5 +162,6 @@ hash-chained audit log; metrics include success rate, retry and rollback frequen
 ## 3. Limitations and roadmap
 
 See `docs/final-summary.md`. Done: Postgres + Redis (cache, Bloom filter, distributed rate limiting);
-event-driven analytics with an outbox (`docs/events.md`). Planned: rollups and HyperLogLog in the aggregator;
-owner API keys and a secrets vault; metrics, tracing and load-test evidence.
+event-driven analytics with an outbox (`docs/events.md`); owner/admin API keys, secret files and signed audit
+checkpoints (`docs/security.md`). Planned: rollups and HyperLogLog in the aggregator; metrics, tracing and
+load-test evidence.

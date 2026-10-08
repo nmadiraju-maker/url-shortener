@@ -52,7 +52,7 @@ A URL shortener service and a governed, agentic SDLC orchestrator that delivered
 | Read-time analytics | Fine at current volume; optional event pipeline (outbox + Redis Streams) decouples writes; rollups planned |
 | Events mode stats are eventually consistent | Counts and caps stay exact; per-click details appear once aggregated |
 | Deterministic agents | Reproducible and fully testable, but they apply prepared change plans rather than generate code |
-| Per-link stats tokens | Private by default, but a lost token cannot be recovered; owner API keys planned |
+| Per-link stats tokens | Private by default; a lost token cannot be recovered, but owner API keys read their links' stats without one |
 | Static shortener and look-alike rules | No network calls on create; a reputation service would catch more |
 
 ## Assumptions
@@ -65,5 +65,6 @@ A URL shortener service and a governed, agentic SDLC orchestrator that delivered
 
 - No real LLM responses are recorded in the repository (see `docs/ai-usage.md`).
 - Greenfield replays the reviewed v0.9.0 baseline; it demonstrates governance, not code generation.
-- The audit trail is tamper-evident, not tamper-proof (no external anchoring yet).
-- No user accounts; stats are protected by per-link tokens or the admin key.
+- The audit trail is tamper-evident, not tamper-proof: signed checkpoints detect rewrites, and shipping them
+  to write-once storage is an operational step.
+- Service API keys only (no end-user accounts or SSO).
