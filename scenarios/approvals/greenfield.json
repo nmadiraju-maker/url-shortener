@@ -1,0 +1,17 @@
+{
+  "design#1": {
+    "status": "approved",
+    "approver": "jane.architect",
+    "comment": "Hexagonal layout, STRIDE mitigations and ADRs accepted."
+  },
+  "development#1": {
+    "status": "approved",
+    "approver": "jane.architect",
+    "comment": "Full build touches protected paths (schema, config, deps) and is large by nature; reviewed."
+  },
+  "release#1": {
+    "status": "approved",
+    "approver": "raj.release-manager",
+    "comment": "All readiness checks green."
+  }
+}

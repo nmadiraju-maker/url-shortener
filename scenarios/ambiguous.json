@@ -1,0 +1,170 @@
+{
+  "name": "ambiguous",
+  "description": "A vague request on v0.10.0: clarified by the product owner, re-planned mid-run by the security lead.",
+  "workspace": {
+    "seed": "baseline",
+    "ref": "v0.10.0",
+    "paths": [
+      "pyproject.toml",
+      "requirements.txt",
+      ".gitignore",
+      "urlshort",
+      "tests/__init__.py",
+      "tests/service",
+      "config",
+      "CHANGELOG.md",
+      "VERSION",
+      "RELEASE_NOTES.md",
+      "docs/generated"
+    ]
+  },
+  "inputs": {
+    "requirements": {
+      "title": "v0.11 - safer links, richer analytics",
+      "requirement": "Make the short links safer and track more stuff about clicks. It should be fast.",
+      "existing_features": [
+        "shorten",
+        "redirect",
+        "alias",
+        "expiry",
+        "analytics",
+        "ratelimit",
+        "admin",
+        "health",
+        "audit",
+        "safety",
+        "proxy",
+        "headers",
+        "cors",
+        "max_clicks"
+      ]
+    }
+  },
+  "stages": [
+    {
+      "id": "requirements",
+      "agent": "requirements",
+      "exit_gates": [
+        "stories_have_acceptance_criteria"
+      ]
+    },
+    {
+      "id": "impact",
+      "agent": "impact",
+      "depends_on": [
+        "requirements"
+      ],
+      "entry_gates": [
+        "requirements"
+      ],
+      "exit_gates": [
+        "impact_scope_defined"
+      ]
+    },
+    {
+      "id": "design",
+      "agent": "design",
+      "exit_gates": [
+        "api_contract_defined",
+        "threat_model_present"
+      ],
+      "requires_approval": true,
+      "depends_on": [
+        "requirements",
+        "impact"
+      ],
+      "entry_gates": [
+        "impact"
+      ]
+    },
+    {
+      "id": "development",
+      "agent": "development",
+      "depends_on": [
+        "design"
+      ],
+      "entry_gates": [
+        "design"
+      ],
+      "exit_gates": [
+        "compiles"
+      ],
+      "mutates_workspace": true,
+      "max_retries": 2,
+      "params": {
+        "mode": "patch"
+      }
+    },
+    {
+      "id": "review",
+      "agent": "review",
+      "depends_on": [
+        "development"
+      ],
+      "entry_gates": [
+        "code_change"
+      ],
+      "exit_gates": [
+        "no_high_findings"
+      ]
+    },
+    {
+      "id": "qa",
+      "agent": "qa",
+      "depends_on": [
+        "review"
+      ],
+      "max_retries": 2,
+      "exit_gates": [
+        "tests_pass",
+        "coverage_threshold_met",
+        "acceptance_criteria_traced"
+      ],
+      "params": {
+        "coverage_threshold": 100
+      }
+    },
+    {
+      "id": "security",
+      "agent": "security",
+      "depends_on": [
+        "review"
+      ],
+      "exit_gates": [
+        "no_blocking_findings",
+        "dependencies_pinned"
+      ]
+    },
+    {
+      "id": "docs",
+      "agent": "docs",
+      "fallback_agent": "docs_static",
+      "depends_on": [
+        "review"
+      ],
+      "mutates_workspace": true,
+      "exit_gates": [
+        "api_documented"
+      ],
+      "critical": false
+    },
+    {
+      "id": "release",
+      "agent": "release",
+      "depends_on": [
+        "qa",
+        "security",
+        "docs"
+      ],
+      "mutates_workspace": true,
+      "requires_approval": true,
+      "impact": "high",
+      "exit_gates": [
+        "all_gates_green"
+      ],
+      "params": {
+        "version": "0.11.0"
+      }
+    }
+  ]
+}

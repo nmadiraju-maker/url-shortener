@@ -1,4 +1,4 @@
-.PHONY: install install-dev run test lint typecheck security smoke ci
+.PHONY: install install-dev run test lint typecheck security smoke ci scenarios greenfield brownfield ambiguous
 
 install:
 	pip install -r requirements.txt
@@ -23,3 +23,8 @@ ci: lint typecheck security
 	pytest --cov=urlshort --cov=sdlc --cov-branch
 	coverage report --include="urlshort/*" --fail-under=100
 	coverage report --include="sdlc/*" --fail-under=100
+
+# SDLC scenarios (need tags v0.9.0 and v0.10.0); reports land in runs/<name>/run-report.md
+greenfield brownfield ambiguous:
+	python -m sdlc.cli run scenarios/$@.json --approvals scenarios/approvals/$@.json --run-dir runs/$@
+scenarios: greenfield brownfield ambiguous

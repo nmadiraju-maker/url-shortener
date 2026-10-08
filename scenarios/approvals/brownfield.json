@@ -1,0 +1,27 @@
+{
+  "design#1": {
+    "status": "approved",
+    "approver": "jane.architect",
+    "comment": "ADR-007 accepted: atomic conditional UPDATE; capped links fail closed."
+  },
+  "migration_review#1": {
+    "status": "approved",
+    "approver": "dba.omar",
+    "comment": "Additive nullable column, expand-only, rollback defined."
+  },
+  "development#1": {
+    "status": "approved",
+    "approver": "jane.architect",
+    "comment": "storage.py change matches the approved migration plan; code quality is review's job."
+  },
+  "development#2": {
+    "status": "approved",
+    "approver": "jane.architect",
+    "comment": "Re-approved after rework; schema scope unchanged."
+  },
+  "release#1": {
+    "status": "approved",
+    "approver": "raj.release-manager",
+    "comment": "Docs came from the static fallback; acceptable. Ship v0.10.0."
+  }
+}

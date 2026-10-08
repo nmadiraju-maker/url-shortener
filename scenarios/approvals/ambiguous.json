@@ -1,0 +1,56 @@
+{
+  "requirements#1": {
+    "status": "amend",
+    "approver": "priya.product-owner",
+    "comment": "'More stuff' means the time-of-day view. 'Fast' is already NFR-1; no new work.",
+    "amendments": {
+      "stage": "requirements",
+      "inputs": {
+        "clarifications": {
+          "more stuff": "hourly",
+          "fast": "No new work: covered by NFR-1 (p99 < 50 ms)"
+        }
+      }
+    }
+  },
+  "requirements#2": {
+    "status": "approved",
+    "approver": "priya.product-owner",
+    "comment": "Assumptions accepted for now: safer = security headers, track more = hourly."
+  },
+  "design#1": {
+    "status": "amend",
+    "approver": "sam.security-lead",
+    "comment": "Headers already exist. Our real incidents are phishing links on look-alike domains. Re-scope 'safer'.",
+    "amendments": {
+      "stage": "requirements",
+      "inputs": {
+        "clarifications": {
+          "more stuff": "hourly",
+          "fast": "No new work: covered by NFR-1 (p99 < 50 ms)",
+          "safer": "lookalike"
+        }
+      }
+    }
+  },
+  "requirements#3": {
+    "status": "approved",
+    "approver": "priya.product-owner",
+    "comment": "Confirmed with the security lead."
+  },
+  "design#2": {
+    "status": "approved",
+    "approver": "sam.security-lead",
+    "comment": "ADR-008 accepted: no network calls on create."
+  },
+  "development#1": {
+    "status": "approved",
+    "approver": "jane.architect",
+    "comment": "Within the approved scope."
+  },
+  "release#1": {
+    "status": "approved",
+    "approver": "raj.release-manager",
+    "comment": "Ship v0.11.0."
+  }
+}
