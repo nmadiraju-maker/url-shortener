@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import unicodedata
 from urllib.parse import urlsplit
 
 from .errors import InvalidInput
@@ -33,6 +34,37 @@ def _is_internal_host(host: str) -> bool:
     return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified
 
 
+# Scripts that legitimately mix inside one name (e.g. Japanese uses kanji with kana) count as one group.
+_SCRIPT_GROUPS = {"HIRAGANA": "CJK", "KATAKANA": "CJK", "HANGUL": "CJK"}
+
+
+def _scripts(label: str) -> set[str]:
+    """Unicode scripts of the letters in a hostname label (digits and hyphens are script-neutral)."""
+    scripts = set()
+    for ch in label:
+        if ch.isalpha():
+            script = unicodedata.name(ch, "UNKNOWN").split(" ")[0]
+            scripts.add(_SCRIPT_GROUPS.get(script, script))
+    return scripts
+
+
+def _is_lookalike(host: str) -> bool:
+    """True if any label mixes writing systems, e.g. Latin with Cyrillic ("pаypal" with a Cyrillic "а").
+
+    Punycode labels (xn--...) are decoded first, so the encoded form of a look-alike is caught too; a label
+    that does not decode is treated as suspicious. Single-script internationalised names stay valid.
+    """
+    for label in host.split("."):
+        if label.startswith("xn--"):
+            try:
+                label = label.encode("ascii").decode("idna")
+            except UnicodeError:
+                return True
+        if len(_scripts(label)) > 1:
+            return True
+    return False
+
+
 def _matches(host: str, domains: frozenset[str]) -> bool:
     """True if host is one of the domains or a subdomain of one."""
     return any(host == d or host.endswith("." + d) for d in domains)
@@ -56,6 +88,8 @@ def validate_url(url: str, *, max_length: int, blocked_domains: frozenset[str] =
     host = parts.hostname.lower()
     if _is_internal_host(host):
         raise InvalidInput("internal or private hosts are not allowed")
+    if _is_lookalike(host):
+        raise InvalidInput("hostname mixes writing systems (possible look-alike of another domain)")
     if _matches(host, blocked_domains):
         raise InvalidInput("target domain is blocked")
     denied = shorteners | ({self_host.lower()} if self_host else frozenset())
