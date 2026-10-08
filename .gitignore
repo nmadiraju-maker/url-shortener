@@ -9,3 +9,5 @@ coverage.xml
 junit.xml
 htmlcov/
 *.db
+*.db-wal
+*.db-shm
