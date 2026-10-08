@@ -312,3 +312,61 @@ def test_non_mapping_requirements_artifact_is_blocked_not_crashed(build):  # typ
     orch = build([{"id": "req", "agent": "r", "max_retries": 0, "critical": False}], {"r": agent})
     assert orch.run() == "FAILED"
     assert "CMP-002" in orch.reasons["req"] and "CMP-003" in orch.reasons["req"]
+
+
+class SignallingApprovals(DictApprovals):
+    """Sets `decided` as soon as a decision is handed out, so a stage can be held in flight until then."""
+
+    def __init__(self, decisions, decided):  # type: ignore[no-untyped-def]
+        super().__init__(decisions)
+        self.decided = decided
+
+    def decide(self, request):  # type: ignore[no-untyped-def]
+        decision = super().decide(request)
+        self.decided.set()
+        return decision
+
+
+def test_amended_stage_still_in_flight_is_rerun_not_committed_stale(build):  # type: ignore[no-untyped-def]
+    """Regression (seen on CI, Python 3.11): an amendment that resets a stage while it is still running
+    must not let the old run's result be committed. The stage is forced to finish only after the
+    amendment, so this ordering happens every time instead of by chance."""
+    import threading
+    decided = threading.Event()
+
+    def other_fn(ctx, n):  # type: ignore[no-untyped-def]
+        if n == 1:
+            decided.wait(5)          # first run stays in flight until the amendment has been decided
+        return StageResult(summary="o", artifacts={"o": {"v": ctx.params.get("v")}})
+    other = FnAgent("o", other_fn)
+    approvals = SignallingApprovals({"gate#1": A(AMEND, "p", "", {"stage": "other", "inputs": {"v": 1}}),
+                                     "gate#2": A(APPROVED, "p")}, decided)
+    orch = build([{"id": "other", "agent": "o"}, {"id": "gate", "agent": "g", "requires_approval": True}],
+                 {"o": other, "g": FnAgent("g", ok("g"))}, approvals)
+    assert orch.run() == "COMPLETED"
+    assert orch.ctx.get("o").content == {"v": 1} and other.calls == 2      # the stale {"v": None} was never kept
+    assert [a.content for a in orch.ctx.history("o")] == [{"v": 1}]
+    assert any(r["event"] == "stage.stale_result_discarded" for r in orch.audit.records())
+
+
+def test_stale_file_changes_are_rolled_back_before_the_rerun(build):  # type: ignore[no-untyped-def]
+    import threading
+    decided = threading.Event()
+
+    def dev_fn(ctx, n):  # type: ignore[no-untyped-def]
+        if n == 1:
+            decided.wait(5)
+        ctx.workspace.write("version.txt", f"{ctx.params.get('v', 'old')}\n")
+        if n == 1:
+            ctx.workspace.write("only-in-stale-run.txt", "x\n")
+        return StageResult(summary="dev")
+    dev = FnAgent("d", dev_fn)
+    approvals = SignallingApprovals({"gate#1": A(AMEND, "p", "", {"stage": "dev", "inputs": {"v": "new"}}),
+                                     "gate#2": A(APPROVED, "p")}, decided)
+    orch = build([{"id": "dev", "agent": "d", "mutates_workspace": True},
+                  {"id": "gate", "agent": "g", "requires_approval": True}],
+                 {"d": dev, "g": FnAgent("g", ok("g"))}, approvals)
+    assert orch.run() == "COMPLETED" and dev.calls == 2
+    assert orch.ws.read("version.txt") == "new\n"
+    assert not orch.ws.exists("only-in-stale-run.txt")                      # stale changes undone
+    assert orch.metrics.summary()["rollbacks"] >= 1
