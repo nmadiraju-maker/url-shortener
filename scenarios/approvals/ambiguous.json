@@ -43,11 +43,6 @@
     "approver": "sam.security-lead",
     "comment": "ADR-008 accepted: no network calls on create."
   },
-  "development#1": {
-    "status": "approved",
-    "approver": "jane.architect",
-    "comment": "Within the approved scope."
-  },
   "release#1": {
     "status": "approved",
     "approver": "raj.release-manager",

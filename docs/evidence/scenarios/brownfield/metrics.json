@@ -1,0 +1,116 @@
+{
+  "attempts": 14,
+  "attempt_success_rate": 0.857,
+  "retries": 1,
+  "rollbacks": 3,
+  "fallbacks": 1,
+  "reworks": 1,
+  "retry_frequency": 0.071,
+  "rollback_frequency": 0.214,
+  "incidents_recovered": 2,
+  "mttr_seconds": 0.163,
+  "end_to_end_latency_seconds": 8.711,
+  "counters": {},
+  "per_stage": {
+    "requirements": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.0
+    },
+    "impact": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.054
+    },
+    "design": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.0
+    },
+    "migration_review": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.0
+    },
+    "development": {
+      "attempts": 3,
+      "successes": 2,
+      "failures": 1,
+      "retries": 1,
+      "rollbacks": 2,
+      "fallbacks": 0,
+      "reworks": 1,
+      "total_seconds": 0.192
+    },
+    "review": {
+      "attempts": 2,
+      "successes": 2,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.058
+    },
+    "docs": {
+      "attempts": 2,
+      "successes": 1,
+      "failures": 1,
+      "retries": 0,
+      "rollbacks": 1,
+      "fallbacks": 1,
+      "reworks": 0,
+      "total_seconds": 0.134
+    },
+    "security": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.068
+    },
+    "qa": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 8.28
+    },
+    "release": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.01
+    }
+  }
+}

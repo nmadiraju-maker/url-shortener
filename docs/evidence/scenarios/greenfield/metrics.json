@@ -1,0 +1,96 @@
+{
+  "attempts": 9,
+  "attempt_success_rate": 0.889,
+  "retries": 1,
+  "rollbacks": 0,
+  "fallbacks": 0,
+  "reworks": 0,
+  "retry_frequency": 0.111,
+  "rollback_frequency": 0.0,
+  "incidents_recovered": 1,
+  "mttr_seconds": 8.626,
+  "end_to_end_latency_seconds": 8.984,
+  "counters": {},
+  "per_stage": {
+    "requirements": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.0
+    },
+    "design": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.0
+    },
+    "development": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.185
+    },
+    "review": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.128
+    },
+    "qa": {
+      "attempts": 2,
+      "successes": 1,
+      "failures": 1,
+      "retries": 1,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 8.571
+    },
+    "security": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.046
+    },
+    "docs": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 1.023
+    },
+    "release": {
+      "attempts": 1,
+      "successes": 1,
+      "failures": 0,
+      "retries": 0,
+      "rollbacks": 0,
+      "fallbacks": 0,
+      "reworks": 0,
+      "total_seconds": 0.009
+    }
+  }
+}
