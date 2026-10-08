@@ -43,9 +43,17 @@ CREATE TABLE IF NOT EXISTS clicks (
     agent_family  TEXT NOT NULL,
     is_bot        INTEGER NOT NULL,
     ip_id         INTEGER,
-    ip_key_id     TEXT
+    ip_key_id     TEXT,
+    event_id      TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_clicks_code_ts ON clicks(code, ts);
+CREATE TABLE IF NOT EXISTS click_outbox (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id     TEXT NOT NULL UNIQUE,
+    payload      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    published_at TEXT
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     ts        TEXT NOT NULL,
@@ -57,7 +65,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     hash      TEXT NOT NULL
 );
 """
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # version -> steps added in that version: (table, column, complete DDL). Expand-only and nullable.
 # Every statement is a literal; nothing is built from strings at runtime.
 MIGRATIONS: dict[int, tuple[tuple[str, str, str], ...]] = {
@@ -65,8 +73,11 @@ MIGRATIONS: dict[int, tuple[tuple[str, str, str], ...]] = {
         ("clicks", "ip_id", "ALTER TABLE clicks ADD COLUMN ip_id INTEGER"),
         ("clicks", "ip_key_id", "ALTER TABLE clicks ADD COLUMN ip_key_id TEXT")),
     3: (("links", "max_clicks", "ALTER TABLE links ADD COLUMN max_clicks INTEGER"),),
+    4: (("clicks", "event_id", "ALTER TABLE clicks ADD COLUMN event_id TEXT"),),
 }
-SET_SCHEMA_VERSION = "PRAGMA user_version = 3"
+# Idempotent DDL that needs the migrated columns, run after every migration check.
+POST_MIGRATION = ("CREATE UNIQUE INDEX IF NOT EXISTS ux_clicks_event_id ON clicks(event_id)",)
+SET_SCHEMA_VERSION = "PRAGMA user_version = 4"
 
 
 @dataclass(frozen=True)
@@ -91,6 +102,7 @@ class Click:
     is_bot: bool
     ip_id: int | None          # keyed visitor ID (see analytics.visitor_id); never the raw IP
     ip_key_id: str | None      # which daily key produced ip_id (UTC date)
+    event_id: str | None = None   # unique per click; makes applying an event idempotent (events mode)
 
 
 @dataclass(frozen=True)
@@ -115,8 +127,12 @@ class Repository(Protocol):
     def find_reusable_link(self, owner: str, target_url: str) -> Link | None: ...
     def deactivate(self, code: str) -> bool: ...
     def all_codes(self) -> list[str]: ...
-    def record_click(self, click: Click) -> None: ...
-    def record_click_with_limit(self, click: Click) -> bool: ...
+    def record_click(self, click: Click, *, as_event: bool = False) -> None: ...
+    def record_click_with_limit(self, click: Click, *, as_event: bool = False) -> bool: ...
+    def outbox_pending(self, limit: int) -> list[tuple[int, str]]: ...
+    def mark_published(self, ids: list[int], at: datetime) -> None: ...
+    def outbox_backlog(self) -> int: ...
+    def apply_click_event(self, click: Click) -> bool: ...
     def clicks_for(self, code: str) -> list[Click]: ...
     def append_audit(self, ts: str, actor: str, action: str, target: str, details: str, chain: ChainFn) -> str: ...
     def audit_records(self) -> list[AuditRecord]: ...
@@ -163,6 +179,8 @@ class SqliteRepository:
                 columns = {r["name"] for r in self._conn.execute("SELECT name FROM pragma_table_info(?)", (table,))}
                 if column not in columns:
                     self._conn.execute(ddl)
+        for ddl in POST_MIGRATION:
+            self._conn.execute(ddl)
         if version < SCHEMA_VERSION:
             self._conn.execute(SET_SCHEMA_VERSION)
 
@@ -219,16 +237,26 @@ class SqliteRepository:
         return cur.rowcount == 1
 
     # ---------------------------------------------------------------- clicks
-    def record_click(self, click: Click) -> None:
-        """Insert the click and bump the human click counter in one transaction."""
+    def _store_click(self, click: Click, as_event: bool) -> None:
+        """Caller holds the lock and an open transaction. In events mode the click goes to the outbox in the
+        SAME transaction as the counter update, so an event can never be lost or recorded without its count."""
+        if as_event:
+            from .events import encode_click  # local import: events depends on storage
+            self._conn.execute("INSERT INTO click_outbox(event_id, payload, created_at) VALUES (?, ?, ?)",
+                               (click.event_id, encode_click(click), _iso(click.ts)))
+            return
+        self._conn.execute(
+            "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id, event_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (click.code, _iso(click.ts), click.referrer_host, click.agent_family, int(click.is_bot),
+             click.ip_id, click.ip_key_id, click.event_id))
+
+    def record_click(self, click: Click, *, as_event: bool = False) -> None:
+        """Record the click (or its event) and bump the human click counter in one transaction."""
         with self._lock:
             self._conn.execute("BEGIN")
             try:
-                self._conn.execute(
-                    "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (click.code, _iso(click.ts), click.referrer_host, click.agent_family, int(click.is_bot),
-                     click.ip_id, click.ip_key_id))
+                self._store_click(click, as_event)
                 if not click.is_bot:
                     self._conn.execute("UPDATE links SET click_count = click_count + 1 WHERE code = ?", (click.code,))
                 self._conn.execute("COMMIT")
@@ -236,7 +264,7 @@ class SqliteRepository:
                 self._conn.execute("ROLLBACK")
                 raise
 
-    def record_click_with_limit(self, click: Click) -> bool:
+    def record_click_with_limit(self, click: Click, *, as_event: bool = False) -> bool:
         """Atomically enforce max_clicks and record the click. Returns False when the cap is reached.
 
         The check and the increment are ONE conditional UPDATE inside BEGIN IMMEDIATE, so concurrent
@@ -256,23 +284,46 @@ class SqliteRepository:
                         " WHERE code = ? AND (max_clicks IS NULL OR click_count < max_clicks)",
                         (click.code,)).rowcount == 1
                 if allowed:
-                    self._conn.execute(
-                        "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (click.code, _iso(click.ts), click.referrer_host, click.agent_family, int(click.is_bot),
-                         click.ip_id, click.ip_key_id))
+                    self._store_click(click, as_event)
                 self._conn.execute("COMMIT")
                 return allowed
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
 
+    # ---------------------------------------------------------------- outbox (events mode)
+    def outbox_pending(self, limit: int) -> list[tuple[int, str]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT id, payload FROM click_outbox WHERE published_at IS NULL"
+                                      " ORDER BY id LIMIT ?", (limit,)).fetchall()
+        return [(r["id"], r["payload"]) for r in rows]
+
+    def mark_published(self, ids: list[int], at: datetime) -> None:
+        with self._lock:
+            self._conn.executemany("UPDATE click_outbox SET published_at = ? WHERE id = ?",
+                                   [(_iso(at), i) for i in ids])
+
+    def outbox_backlog(self) -> int:
+        with self._lock:
+            return int(self._conn.execute("SELECT COUNT(*) FROM click_outbox WHERE published_at IS NULL")
+                       .fetchone()[0])
+
+    def apply_click_event(self, click: Click) -> bool:
+        """Insert the click unless this event was already applied (unique event_id): True if it was new."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id, event_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
+                (click.code, _iso(click.ts), click.referrer_host, click.agent_family, int(click.is_bot),
+                 click.ip_id, click.ip_key_id, click.event_id))
+        return cur.rowcount == 1
+
     def clicks_for(self, code: str) -> list[Click]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM clicks WHERE code = ? ORDER BY ts, id", (code,)).fetchall()
         return [Click(code=r["code"], ts=_dt(r["ts"]), referrer_host=r["referrer_host"],
                       agent_family=r["agent_family"], is_bot=bool(r["is_bot"]), ip_id=r["ip_id"],
-                      ip_key_id=r["ip_key_id"])
+                      ip_key_id=r["ip_key_id"], event_id=r["event_id"])
                 for r in rows]
 
     # ---------------------------------------------------------------- audit

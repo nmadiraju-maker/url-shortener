@@ -75,6 +75,7 @@ class Settings:
     database_url: str = ""                  # postgresql://... (env only: may hold a password); empty = SQLite
     redis_url: str = ""                     # redis://... (env only); enables the cache, Bloom filter, shared limits
     cache_ttl_seconds: int = 60             # how long a cached link may be served (click_count may lag this much)
+    analytics_mode: str = "sync"            # "events": clicks via transactional outbox + workers (docs/events.md)
     ip_hash_salt: str = "change-me"         # DEFAULT_IP_SALT; replace via URLSHORT_IP_SALT
     blocked_domains: frozenset[str] = field(default_factory=frozenset)
     known_shorteners: frozenset[str] = KNOWN_SHORTENERS
@@ -102,6 +103,7 @@ FILE_SCHEMA: dict[str, dict[str, tuple[str, type]]] = {
     "logging": {"level": ("log_level", str), "redact_keys": ("log_redact_keys", list),
                 "request_sample_rate": ("log_request_sample_rate", float)},
     "cache": {"ttl_seconds": ("cache_ttl_seconds", int)},
+    "analytics": {"mode": ("analytics_mode", str)},
     "http": {"trusted_proxies": ("trusted_proxies", list), "cors_allow_origins": ("cors_allow_origins", list),
              "expose_docs": ("expose_docs", bool), "hsts_max_age": ("hsts_max_age", int)},
 }
@@ -112,6 +114,7 @@ ENV_SCHEMA: dict[str, tuple[str, type]] = {
     "URLSHORT_DATABASE_URL": ("database_url", str),
     "URLSHORT_REDIS_URL": ("redis_url", str),
     "URLSHORT_CACHE_TTL": ("cache_ttl_seconds", int),
+    "URLSHORT_ANALYTICS_MODE": ("analytics_mode", str),
     "URLSHORT_BASE_URL": ("base_url", str),
     "URLSHORT_CODE_LENGTH": ("code_length", int),
     "URLSHORT_MAX_URL_LENGTH": ("max_url_length", int),
@@ -228,6 +231,9 @@ def _check(values: dict[str, object]) -> None:
     if isinstance(keys, frozenset):
         values["log_redact_keys"] = keys | DEFAULT_REDACT_KEYS   # configured keys add to the defaults, never replace
     _check_http(values)
+    mode = values.get("analytics_mode")
+    if isinstance(mode, str) and mode not in ("sync", "events"):
+        raise ConfigError(f"analytics mode must be 'sync' or 'events', got {mode!r}")
     environment = values.get("environment")
     if isinstance(environment, str):
         values["environment"] = environment.strip().lower()

@@ -133,11 +133,23 @@ class CachedRepository:
         return self._repo.all_codes()
 
     # ---------------------------------------------------------------- pass-through
-    def record_click(self, click: Click) -> None:
-        self._repo.record_click(click)
+    def record_click(self, click: Click, *, as_event: bool = False) -> None:
+        self._repo.record_click(click, as_event=as_event)
 
-    def record_click_with_limit(self, click: Click) -> bool:
-        return self._repo.record_click_with_limit(click)
+    def record_click_with_limit(self, click: Click, *, as_event: bool = False) -> bool:
+        return self._repo.record_click_with_limit(click, as_event=as_event)
+
+    def outbox_pending(self, limit: int) -> list[tuple[int, str]]:
+        return self._repo.outbox_pending(limit)
+
+    def mark_published(self, ids: list[int], at: datetime) -> None:
+        self._repo.mark_published(ids, at)
+
+    def outbox_backlog(self) -> int:
+        return self._repo.outbox_backlog()
+
+    def apply_click_event(self, click: Click) -> bool:
+        return self._repo.apply_click_event(click)
 
     def clicks_for(self, code: str) -> list[Click]:
         return self._repo.clicks_for(code)

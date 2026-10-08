@@ -17,6 +17,7 @@ from .audit import AuditTrail
 from .codegen import random_code
 from .config import Settings
 from .errors import AliasConflict, CodeSpaceExhausted, LinkExhausted, LinkExpired, NotFound, StorageUnavailable
+from .events import new_event_id
 from .storage import Click, Link, Repository
 from .validation import validate_alias, validate_max_clicks, validate_ttl, validate_url
 
@@ -95,12 +96,13 @@ class ShortenerService:
         family, is_bot = analytics.agent_family(user_agent)
         ip_id, key_id = analytics.visitor_id(client_ip, self.settings.ip_hash_salt, now)
         click = Click(code=code, ts=now, referrer_host=analytics.referrer_host(referrer), agent_family=family,
-                      is_bot=is_bot, ip_id=ip_id, ip_key_id=key_id)
+                      is_bot=is_bot, ip_id=ip_id, ip_key_id=key_id, event_id=new_event_id())
+        as_event = self.settings.analytics_mode == "events"   # counts stay synchronous; details go via the outbox
         if link.max_clicks is not None:
             # Capped link: the count IS the business rule, so check-and-count atomically and fail closed
             # (503) if storage is unavailable. Never trust the snapshot read above.
             try:
-                allowed = self.repo.record_click_with_limit(click)
+                allowed = self.repo.record_click_with_limit(click, as_event=as_event)
             except Exception as exc:
                 log.exception("click limit check failed", extra={"code": code})
                 raise StorageUnavailable("could not verify the click limit; please retry") from exc
@@ -108,7 +110,7 @@ class ShortenerService:
                 raise LinkExhausted(f"link '{code}' has reached its click limit")
             return link.target_url
         try:
-            self.repo.record_click(click)
+            self.repo.record_click(click, as_event=as_event)
         except Exception:  # uncapped: fail open, analytics must never break a redirect
             log.exception("click recording failed", extra={"code": code})
         return link.target_url
