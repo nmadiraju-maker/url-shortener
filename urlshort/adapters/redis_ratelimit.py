@@ -15,6 +15,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from ..ratelimit import Decision
+from ..throttled import ThrottledLog
 
 log = logging.getLogger("urlshort.ratelimit")
 
@@ -45,12 +46,13 @@ class RedisGcraLimiter:
         self._interval_ms = max(1, 60_000 // rate_per_minute)
         self._prefix = f"urlshort:rl:{name}:"
         self._script = client.register_script(GCRA_LUA)
+        self._warn = ThrottledLog(log, "rate limiter unavailable; allowing requests")
 
     def acquire(self, key: str) -> Decision:
         try:
             result: Any = self._script(keys=[self._prefix + key], args=[self._interval_ms, self.limit])
         except RedisError:
-            log.warning("rate limiter unavailable; allowing request", exc_info=True)
+            self._warn()
             return Decision(allowed=True, limit=self.limit, remaining=self.limit, reset_after=0.0, retry_after=0.0)
         allowed, remaining, reset_ms, retry_ms = (int(x) for x in result)
         return Decision(allowed=bool(allowed), limit=self.limit, remaining=remaining,

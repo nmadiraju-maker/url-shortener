@@ -11,15 +11,18 @@ Schema changes are Alembic revisions (urlshort/adapters/migrations), applied on 
 
 from __future__ import annotations
 
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
-from ..errors import AliasConflict
+from ..errors import AliasConflict, StorageUnavailable
 from ..events import encode_click
 from ..storage import ApiKey, AuditRecord, ChainFn, Click, Link
 
@@ -48,12 +51,37 @@ def migrate(url: str) -> str:
 
 
 class PostgresRepository:
-    def __init__(self, url: str, *, min_size: int = 1, max_size: int = 10, auto_migrate: bool = True) -> None:
+    def __init__(self, url: str, *, min_size: int = 1, max_size: int = 10, auto_migrate: bool = True,
+                 timeout: float = 3.0, cooldown: float = 5.0) -> None:
         if auto_migrate:
             migrate(url)
+        # timeout: how long a request may wait for a connection. Short on purpose: when the database is down,
+        # requests fail fast with 503 instead of hanging until clients give up (found by the chaos drill).
         self._pool: ConnectionPool[psycopg.Connection[dict[str, Any]]] = ConnectionPool(
-            url, min_size=min_size, max_size=max_size, open=True,
-            kwargs={"row_factory": dict_row}, connection_class=psycopg.Connection)
+            url, min_size=min_size, max_size=max_size, open=True, timeout=timeout,
+            kwargs={"row_factory": dict_row, "connect_timeout": max(1, int(timeout))},
+            connection_class=psycopg.Connection)
+        self._pool_connection = self._pool.connection
+        self._open_until = 0.0          # circuit breaker: fail at once until then (monotonic seconds)
+        self._cooldown = cooldown
+
+    @contextmanager
+    def _connection(self) -> Iterator[psycopg.Connection[dict[str, Any]]]:
+        """A pooled connection; losing the database becomes StorageUnavailable (503 with Retry-After).
+
+        Circuit breaker (found by the chaos drill): after a failure, calls fail IMMEDIATELY for `cooldown`
+        seconds instead of each waiting for the pool timeout, so cached redirects stay fast during an outage
+        (their click write fails open at once) and uncached ones get an instant 503. After the cooldown one
+        call tries the database again. /readyz always probes the database itself.
+        """
+        if time.monotonic() < self._open_until:
+            raise StorageUnavailable("database unavailable; please retry")
+        try:
+            with self._pool_connection() as conn:
+                yield conn
+        except (PoolTimeout, psycopg.OperationalError) as exc:
+            self._open_until = time.monotonic() + self._cooldown
+            raise StorageUnavailable("database unavailable; please retry") from exc
 
     def close(self) -> None:
         self._pool.close()
@@ -67,7 +95,7 @@ class PostgresRepository:
     # ---------------------------------------------------------------- links
     def insert_link(self, link: Link) -> None:
         try:
-            with self._pool.connection() as conn:
+            with self._connection() as conn:
                 conn.execute(
                     "INSERT INTO links(code, target_url, owner, created_at, expires_at, is_active, click_count,"
                     " stats_token_hash, max_clicks) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -79,24 +107,24 @@ class PostgresRepository:
             raise
 
     def get_link(self, code: str) -> Link | None:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             row = conn.execute("SELECT * FROM links WHERE code = %s", (code,)).fetchone()
         return self._to_link(row) if row else None
 
     def find_reusable_link(self, owner: str, target_url: str) -> Link | None:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM links WHERE owner = %s AND target_url = %s AND is_active AND expires_at IS NULL"
                 " AND max_clicks IS NULL ORDER BY created_at DESC LIMIT 1", (owner, target_url)).fetchone()
         return self._to_link(row) if row else None
 
     def deactivate(self, code: str) -> bool:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             cur = conn.execute("UPDATE links SET is_active = FALSE WHERE code = %s AND is_active", (code,))
         return cur.rowcount == 1
 
     def all_codes(self) -> list[str]:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             return [r["code"] for r in conn.execute("SELECT code FROM links").fetchall()]
 
     # ---------------------------------------------------------------- API keys
@@ -106,23 +134,23 @@ class PostgresRepository:
                       secret_hash=r["secret_hash"], created_at=r["created_at"], revoked_at=r["revoked_at"])
 
     def insert_api_key(self, key: ApiKey) -> None:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             conn.execute("INSERT INTO api_keys(key_id, name, owner, role, secret_hash, created_at)"
                          " VALUES (%s, %s, %s, %s, %s, %s)",
                          (key.key_id, key.name, key.owner, key.role, key.secret_hash, key.created_at))
 
     def get_api_key(self, key_id: str) -> ApiKey | None:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             row = conn.execute("SELECT * FROM api_keys WHERE key_id = %s", (key_id,)).fetchone()
         return self._to_key(row) if row else None
 
     def list_api_keys(self) -> list[ApiKey]:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             rows = conn.execute("SELECT * FROM api_keys ORDER BY created_at, key_id").fetchall()
         return [self._to_key(r) for r in rows]
 
     def revoke_api_key(self, key_id: str, at: datetime) -> bool:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             cur = conn.execute("UPDATE api_keys SET revoked_at = %s WHERE key_id = %s AND revoked_at IS NULL",
                                (at, key_id))
         return cur.rowcount == 1
@@ -142,13 +170,13 @@ class PostgresRepository:
              click.ip_key_id, click.event_id))
 
     def record_click(self, click: Click, *, as_event: bool = False) -> None:
-        with self._pool.connection() as conn, conn.transaction():
+        with self._connection() as conn, conn.transaction():
             self._store_click(conn, click, as_event)
             if not click.is_bot:
                 conn.execute("UPDATE links SET click_count = click_count + 1 WHERE code = %s", (click.code,))
 
     def record_click_with_limit(self, click: Click, *, as_event: bool = False) -> bool:
-        with self._pool.connection() as conn, conn.transaction():
+        with self._connection() as conn, conn.transaction():
             if click.is_bot:
                 allowed = conn.execute(
                     "SELECT 1 FROM links WHERE code = %s AND (max_clicks IS NULL OR click_count < max_clicks)",
@@ -164,22 +192,22 @@ class PostgresRepository:
 
     # ---------------------------------------------------------------- outbox (events mode)
     def outbox_pending(self, limit: int) -> list[tuple[int, str]]:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             rows = conn.execute("SELECT id, payload FROM click_outbox WHERE published_at IS NULL ORDER BY id"
                                 " LIMIT %s", (limit,)).fetchall()
         return [(r["id"], r["payload"]) for r in rows]
 
     def mark_published(self, ids: list[int], at: datetime) -> None:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             conn.execute("UPDATE click_outbox SET published_at = %s WHERE id = ANY(%s)", (at, ids))
 
     def outbox_backlog(self) -> int:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             row = conn.execute("SELECT COUNT(*) AS n FROM click_outbox WHERE published_at IS NULL").fetchone()
         return int(row["n"]) if row else 0
 
     def apply_click_event(self, click: Click) -> bool:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "INSERT INTO clicks(code, ts, referrer_host, agent_family, is_bot, ip_id, ip_key_id, event_id)"
                 " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (event_id) DO NOTHING",
@@ -188,7 +216,7 @@ class PostgresRepository:
         return cur.rowcount == 1
 
     def clicks_for(self, code: str) -> list[Click]:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             rows = conn.execute("SELECT * FROM clicks WHERE code = %s ORDER BY ts, id", (code,)).fetchall()
         return [Click(code=r["code"], ts=r["ts"], referrer_host=r["referrer_host"], agent_family=r["agent_family"],
                       is_bot=r["is_bot"], ip_id=r["ip_id"], ip_key_id=r["ip_key_id"], event_id=r["event_id"])
@@ -196,7 +224,7 @@ class PostgresRepository:
 
     # ---------------------------------------------------------------- audit
     def append_audit(self, ts: str, actor: str, action: str, target: str, details: str, chain: ChainFn) -> str:
-        with self._pool.connection() as conn, conn.transaction():
+        with self._connection() as conn, conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (AUDIT_LOCK_KEY,))   # released at commit/rollback
             row = conn.execute("SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
             prev_hash, new_hash = chain(row["hash"] if row else None)
@@ -206,14 +234,14 @@ class PostgresRepository:
             return new_hash
 
     def audit_records(self) -> list[AuditRecord]:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             rows = conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
         return [AuditRecord(**r) for r in rows]
 
     # ---------------------------------------------------------------- ops
     def ping(self) -> bool:
         try:
-            with self._pool.connection(timeout=2) as conn:
+            with self._pool_connection(timeout=2) as conn:
                 conn.execute("SELECT 1")
             return True
         except Exception:  # readiness probe: any failure means "not ready", never an exception

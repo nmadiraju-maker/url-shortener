@@ -25,6 +25,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from ..storage import ApiKey, AuditRecord, ChainFn, Click, Link, Repository
+from ..throttled import ThrottledLog
 
 log = logging.getLogger("urlshort.cache")
 NEGATIVE = b"-"
@@ -85,6 +86,7 @@ class CachedRepository:
     def __init__(self, repo: Repository, client: Redis, *, ttl: int = 60, negative_ttl: int = 30,
                  bloom: BloomFilter | None = None) -> None:
         self._repo, self._r = repo, client
+        self._warn = ThrottledLog(log, "cache unavailable; using the database")
         self._ttl, self._negative_ttl = ttl, negative_ttl
         self.bloom = bloom
 
@@ -96,7 +98,7 @@ class CachedRepository:
         try:
             return action()
         except RedisError:
-            log.warning("cache unavailable; using the database", exc_info=True)
+            self._warn()
             return default
 
     # ---------------------------------------------------------------- links
